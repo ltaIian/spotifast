@@ -1,7 +1,8 @@
-//! Ten-band equalizer for local playback.
+//! Ten-band equalizer and bass boost for local playback.
 //!
 //! Each Winamp band uses a second-order peaking filter. Bands and preamp range
-//! from -12 to +12 dB.
+//! from -12 to +12 dB. The bass boost is a low shelf after the bands, 0 to
+//! +12 dB, apart from the 60 Hz band and from the presets.
 //!
 //! The UI writes settings into a cell the player reads once per packet
 //! without a lock, solving the bands again only after a change. A change of
@@ -93,11 +94,14 @@ impl EqSettings {
         [(1.0 - balance).min(1.0), (1.0 + balance).min(1.0)]
     }
 
-    /// Filter response used for playback and the curve display.
+    /// Filter response used for playback and the curve display, the bass
+    /// boost included.
     pub fn curve(&self) -> Curve {
+        let boost = f64::from(self.bass_boost_db);
         Curve {
             preamp_db: self.preamp_db,
             bands: chain(&self.bands_db),
+            shelf: (boost != 0.0).then(|| boost_shelf(boost)),
         }
     }
 
@@ -112,12 +116,14 @@ pub struct Curve {
     preamp_db: f32,
     /// Each band's filter, `None` for a band left out.
     bands: [Option<Biquad>; 10],
+    /// The bass boost's shelf, `None` while there is no boost.
+    shelf: Option<Biquad>,
 }
 
 impl Curve {
     pub fn db_at(&self, hz: f32) -> f32 {
         let mut db = f64::from(self.preamp_db);
-        for filter in self.bands.iter().flatten() {
+        for filter in self.bands.iter().flatten().chain(&self.shelf) {
             db += filter.gain_db_at(f64::from(hz));
         }
         db as f32
@@ -484,7 +490,8 @@ fn decode(words: [u32; WORDS]) -> EqSettings {
     }
 }
 
-/// A second-order section in direct form I, one per band and channel.
+/// A second-order section in direct form I: a band, or the bass boost's shelf,
+/// on one channel.
 #[derive(Clone, Copy, Debug, Default)]
 struct Biquad {
     b0: f64,
@@ -516,6 +523,28 @@ impl Biquad {
             b2: (1.0 - alpha * a) / a0,
             a1: (-2.0 * cos) / a0,
             a2: (1.0 - alpha / a) / a0,
+            ..Self::default()
+        }
+    }
+
+    /// A low shelf after the Audio EQ Cookbook with a shelf slope of one
+    /// (a Q of 0.707): `gain_db` well below `hz`, half of it at `hz`, and
+    /// nothing far above. Normalised by `a0`.
+    fn low_shelf(hz: f64, gain_db: f64) -> Self {
+        let a = 10f64.powf(gain_db / 40.0);
+        let w0 = std::f64::consts::TAU * hz / f64::from(SAMPLE_RATE);
+        let (sin, cos) = w0.sin_cos();
+        // The cookbook's alpha, sin(w0) / 2 * sqrt((A + 1/A) * (1/S - 1) + 2),
+        // at S = 1.
+        let alpha = sin / std::f64::consts::SQRT_2;
+        let root = 2.0 * a.sqrt() * alpha;
+        let a0 = (a + 1.0) + (a - 1.0) * cos + root;
+        Self {
+            b0: a * ((a + 1.0) - (a - 1.0) * cos + root) / a0,
+            b1: 2.0 * a * ((a - 1.0) - (a + 1.0) * cos) / a0,
+            b2: a * ((a + 1.0) - (a - 1.0) * cos - root) / a0,
+            a1: -2.0 * ((a - 1.0) + (a + 1.0) * cos) / a0,
+            a2: ((a + 1.0) + (a - 1.0) * cos - root) / a0,
             ..Self::default()
         }
     }
@@ -576,17 +605,23 @@ impl Biquad {
     }
 }
 
+/// The bass boost's filter at `gain_db`.
+fn boost_shelf(gain_db: f64) -> Biquad {
+    Biquad::low_shelf(f64::from(BASS_BOOST_HZ), gain_db)
+}
+
 /// A gain in decibels as a factor.
 fn amplitude(db: f64) -> f64 {
     10f64.powf(db / 20.0)
 }
 
-/// Where the filters are, in decibels: the preamp and the gain each band's
-/// filter is given (solved, zero for a band left out).
+/// Where the filters are, in decibels: the preamp, the gain each band's
+/// filter is given (solved, zero for a band left out) and the bass boost.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Shape {
     preamp_db: f64,
     bands_db: [f64; 10],
+    boost_db: f64,
 }
 
 impl Shape {
@@ -594,6 +629,7 @@ impl Shape {
     const FLAT: Self = Self {
         preamp_db: 0.0,
         bands_db: [0.0; 10],
+        boost_db: 0.0,
     };
 
     /// What `settings` ask of the filters: nothing while the switch is off.
@@ -604,6 +640,7 @@ impl Shape {
         Self {
             preamp_db: f64::from(settings.preamp_db),
             bands_db: solved(&settings.bands_db, widths),
+            boost_db: f64::from(settings.bass_boost_db),
         }
     }
 
@@ -617,6 +654,7 @@ impl Shape {
         Self {
             preamp_db: mix(self.preamp_db, to.preamp_db),
             bands_db: std::array::from_fn(|band| mix(self.bands_db[band], to.bands_db[band])),
+            boost_db: mix(self.boost_db, to.boost_db),
         }
     }
 }
@@ -646,8 +684,9 @@ pub struct Processor {
     /// The preamp's gain, and how far it moves each frame.
     gain: f64,
     gain_step: f64,
-    /// Each channel's band filters.
+    /// Each channel's band filters, and its bass boost shelf.
     bands: [[Biquad; 10]; CHANNELS],
+    shelves: [Biquad; CHANNELS],
 }
 
 impl Processor {
@@ -669,6 +708,7 @@ impl Processor {
             gain: amplitude(shape.preamp_db),
             gain_step: 0.0,
             bands: [[Biquad::default(); 10]; CHANNELS],
+            shelves: [Biquad::default(); CHANNELS],
         };
         processor.tune(&shape);
         processor
@@ -682,6 +722,10 @@ impl Processor {
             for channel in &mut self.bands {
                 channel[band].retune(&filter);
             }
+        }
+        let shelf = boost_shelf(shape.boost_db);
+        for channel in &mut self.shelves {
+            channel.retune(&shelf);
         }
     }
 
@@ -705,7 +749,7 @@ impl Processor {
 
     /// Forgets every filter's history.
     fn clear(&mut self) {
-        for filter in self.bands.iter_mut().flatten() {
+        for filter in self.bands.iter_mut().flatten().chain(&mut self.shelves) {
             filter.clear();
         }
     }
@@ -767,7 +811,7 @@ impl Processor {
         }
     }
 
-    /// One frame through the preamp and the bands.
+    /// One frame through the preamp, the bands and the shelf.
     fn filter_frame(&mut self, frame: &mut [f64; CHANNELS]) {
         if self.ramp > 0 {
             self.advance();
@@ -776,12 +820,13 @@ impl Processor {
             self.shaping = self.tail > 0;
         }
         let gain = self.gain;
-        for (sample, bands) in frame.iter_mut().zip(&mut self.bands) {
+        let filters = self.bands.iter_mut().zip(&mut self.shelves);
+        for (sample, (bands, shelf)) in frame.iter_mut().zip(filters) {
             let mut y = *sample * gain;
             for band in bands {
                 y = band.run(y);
             }
-            *sample = y;
+            *sample = shelf.run(y);
         }
     }
 
@@ -813,7 +858,7 @@ impl Processor {
             }
         }
         if self.shaping {
-            for filter in self.bands.iter_mut().flatten() {
+            for filter in self.bands.iter_mut().flatten().chain(&mut self.shelves) {
                 filter.flush();
             }
         }
@@ -1055,6 +1100,7 @@ mod tests {
 
         let mut shaped = flat;
         shaped.bands_db[0] = 12.0;
+        shaped.bass_boost_db = 12.0;
         shared.set(shaped);
         processor.process(&mut tone(440.0, 4096));
         shared.set(flat);
@@ -1062,6 +1108,87 @@ mod tests {
         let mut samples = original.clone();
         processor.process(&mut samples);
         assert_eq!(samples, original, "once the change is over");
+    }
+
+    /// The bass boost alone lifts the deep bass by its full amount and the
+    /// shelf's corner by half, leaves the middle alone, and the drawn
+    /// response shows what is played.
+    #[test]
+    fn the_bass_boost_lifts_the_bass_and_leaves_the_middle() {
+        let boosted = EqSettings {
+            on: true,
+            bass_boost_db: 12.0,
+            ..EqSettings::default()
+        };
+        let shared = shared();
+        shared.set(boosted);
+        let mut processor = Processor::new(shared);
+        // A quarter of a second, a whole number of half periods of each tone,
+        // after the shelf has settled.
+        let mut played = |hz: f32| {
+            let mut samples = tone(hz, 22_050);
+            let before = rms(&samples[22_050..]);
+            processor.process(&mut samples);
+            20.0 * (rms(&samples[22_050..]) / before).log10()
+        };
+        let deep = played(40.0);
+        assert!((deep - 12.0).abs() < 1.0, "40 Hz gained {deep:.1} dB");
+        let corner = played(90.0);
+        assert!((corner - 6.0).abs() < 1.5, "90 Hz gained {corner:.1} dB");
+        let middle = played(1000.0);
+        assert!(middle.abs() < 0.5, "1 kHz moved {middle:.1} dB");
+        for (hz, gained) in [(40.0, deep), (90.0, corner), (1000.0, middle)] {
+            let drawn = f64::from(boosted.response_db(hz));
+            assert!((drawn - gained).abs() < 0.1, "{hz} Hz: {drawn:.1} dB");
+        }
+    }
+
+    /// The bass boost is no second 60 Hz slider: with both, the bass rises
+    /// by the two together, played and drawn.
+    #[test]
+    fn the_bass_boost_stacks_on_the_sixty_hertz_band() {
+        let mut band = EqSettings {
+            on: true,
+            ..EqSettings::default()
+        };
+        band.bands_db[0] = 12.0;
+        let boost = EqSettings {
+            on: true,
+            bass_boost_db: 12.0,
+            ..EqSettings::default()
+        };
+        let mut both = band;
+        both.bass_boost_db = 12.0;
+        let played = |settings: EqSettings| {
+            let shared = shared();
+            shared.set(settings);
+            let mut processor = Processor::new(shared);
+            let mut samples = tone(60.0, 22_050);
+            let before = rms(&samples[22_050..]);
+            processor.process(&mut samples);
+            20.0 * (rms(&samples[22_050..]) / before).log10()
+        };
+        let (band_alone, boost_alone) = (played(band), played(boost));
+        let together = played(both);
+        assert!(
+            together > band_alone + 6.0 && together > boost_alone + 6.0,
+            "60 Hz gains {together:.1} dB with both, {band_alone:.1} and {boost_alone:.1} apart"
+        );
+        let drawn = both.response_db(60.0);
+        let apart = band.response_db(60.0) + boost.response_db(60.0);
+        assert!((drawn - apart).abs() < 0.01, "{drawn} against {apart}");
+        assert!((f64::from(drawn) - together).abs() < 0.1);
+    }
+
+    #[test]
+    fn the_bass_boost_is_kept_within_its_range() {
+        for (asked, kept) in [(-3.0, 0.0), (20.0, BASS_BOOST_MAX_DB), (6.5, 6.5)] {
+            let settings = EqSettings {
+                bass_boost_db: asked,
+                ..EqSettings::default()
+            };
+            assert_eq!(settings.clamped().bass_boost_db, kept, "{asked} dB");
+        }
     }
 
     /// The largest step between neighbouring samples of the left channel.
@@ -1098,27 +1225,31 @@ mod tests {
         ]
     }
 
-    /// Moving the preamp or a band, or turning the switch either way,
-    /// mid-stream never steps from one sample to the next by more than the
-    /// tone does on its own before or after: no click.
+    /// Moving the bass boost, the preamp or a band, or turning the switch
+    /// either way, mid-stream never steps from one sample to the next by
+    /// more than the tone does on its own before or after: no click.
     #[test]
     fn a_change_mid_stream_does_not_click() {
         let on = EqSettings {
             on: true,
             ..EqSettings::default()
         };
+        let mut boosted = on;
+        boosted.bass_boost_db = 12.0;
         let mut louder = on;
         louder.preamp_db = 12.0;
         let mut quieter = on;
         quieter.preamp_db = -12.0;
         let mut band = on;
         band.bands_db[4] = 12.0; // 1 kHz
-        let mut loud = on;
+        let mut loud = boosted;
         loud.preamp_db = 6.0;
         loud.bands_db[0] = 12.0;
         let mut off = loud;
         off.on = false;
         let changes = [
+            ("the bass boost up", on, boosted, 40.0),
+            ("the bass boost down", boosted, on, 40.0),
             ("the preamp up", on, louder, 1000.0),
             ("the preamp down", on, quieter, 1000.0),
             ("a band", on, band, 1000.0),

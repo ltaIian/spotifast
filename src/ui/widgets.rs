@@ -3178,15 +3178,35 @@ pub fn chips<T: PartialEq + Copy>(
     options: &[(T, &str)],
     current: T,
 ) -> Option<T> {
+    let row = ui.horizontal_wrapped(|ui| chip_buttons(ui, palette, options, current));
+    row.inner
+}
+
+/// [`chips`] on one line that never wraps, for a row that scrolls sideways.
+pub fn chip_line<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    palette: &Palette,
+    options: &[(T, &str)],
+    current: T,
+) -> Option<T> {
+    let row = ui.horizontal(|ui| chip_buttons(ui, palette, options, current));
+    row.inner
+}
+
+/// The chips themselves, in whatever row holds them.
+fn chip_buttons<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    palette: &Palette,
+    options: &[(T, &str)],
+    current: T,
+) -> Option<T> {
+    ui.spacing_mut().item_spacing.x = 8.0;
     let mut selected = None;
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        for (value, label) in options {
-            if theme::soft_button(ui, palette, None, label, *value == current).clicked() {
-                selected = Some(*value);
-            }
+    for (value, label) in options {
+        if theme::soft_button(ui, palette, None, label, *value == current).clicked() {
+            selected = Some(*value);
         }
-    });
+    }
     selected
 }
 

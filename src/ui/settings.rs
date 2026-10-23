@@ -74,11 +74,13 @@ thread_local! {
 pub(crate) fn demo_scroll_to_equalizer() {
     DEMO_EQUALIZER.with(|scroll| scroll.set(true));
 }
+
 /// The equalizer's presets as chips, the built-in ones and then the ones
 /// saved here (#702). A saved preset carries its preamp too, and is the
-/// current one when both it and a built-in one match. Returns the name of
-/// the saved preset in use, which [`eq_preset_controls`] offers to delete.
-pub(super) fn eq_preset_chips(app: &mut App, ui: &mut egui::Ui) -> Option<String> {
+/// current one when both it and a built-in one match. On one `line` they
+/// never wrap, for a row that scrolls sideways. Returns the name of the
+/// saved preset in use, which [`eq_preset_controls`] offers to delete.
+pub(super) fn eq_preset_chips(app: &mut App, ui: &mut egui::Ui, line: bool) -> Option<String> {
     let palette = app.palette;
     let built_in = crate::eq::PRESETS.len();
     let user_presets = app.settings.eq_user_presets.clone();
@@ -99,7 +101,12 @@ pub(super) fn eq_preset_chips(app: &mut App, ui: &mut egui::Ui) -> Option<String
                 .position(|preset| preset.bands_db == app.settings.eq_bands_db)
         })
         .unwrap_or(usize::MAX);
-    if let Some(picked) = widgets::chips(ui, &palette, &names, current) {
+    let picked = if line {
+        widgets::chip_line(ui, &palette, &names, current)
+    } else {
+        widgets::chips(ui, &palette, &names, current)
+    };
+    if let Some(picked) = picked {
         app.actions.push(match picked.checked_sub(built_in) {
             Some(user) => Action::ApplyUserEqPreset(user_presets[user].name.clone()),
             None => Action::ApplyEqPreset(picked),
@@ -2136,38 +2143,39 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             );
             let eq_extra_visible = equalizer_rows[1].matches(&needle, &equalizer);
             if eq_extra_visible {
-                let current = eq_preset_chips(app, ui);
+                let current = eq_preset_chips(app, ui, false);
                 ui.add_space(8.0);
                 eq_preset_controls(app, ui, current.as_deref());
                 ui.add_space(10.0);
                 eq_curve(ui, &palette, &crate::app::eq_settings(&app.settings));
                 ui.add_space(10.0);
                 let on = app.settings.eq_on;
-                let sliders = |ui: &mut egui::Ui| {
-                    ui.spacing_mut().item_spacing.x = 14.0;
-                    let mut preamp = app.settings.eq_preamp_db;
-                    if eq_slider(
-                        ui,
-                        &palette,
-                        // Translators: short label under the equalizer's preamplifier slider.
-                        &pgettext(locale, "equalizer", "Pre"),
-                        &mut preamp,
-                        on,
-                    ) {
-                        app.actions.push(Action::SetEqPreamp(preamp));
-                    }
-                    for (band, hz) in crate::eq::BANDS.iter().enumerate() {
-                        let mut gain = app.settings.eq_bands_db[band];
-                        if eq_slider(ui, &palette, &hertz(*hz), &mut gain, on) {
-                            app.actions.push(Action::SetEqBand(band, gain));
-                        }
-                    }
-                };
-                // The row needs 470 points; on a phone it wraps.
                 if theme::compact(ui.ctx()) {
-                    ui.horizontal_wrapped(sliders);
+                    // The row of eleven sliders needs 470 points. On a phone
+                    // the bands wrap into the equalizer page's grid, and the
+                    // preamp is a bar like Bass boost.
+                    super::equalizer::bands_and_preamp(app, ui, on);
                 } else {
-                    ui.horizontal(sliders);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 14.0;
+                        let mut preamp = app.settings.eq_preamp_db;
+                        if eq_slider(
+                            ui,
+                            &palette,
+                            // Translators: short label under the equalizer's preamplifier slider.
+                            &pgettext(locale, "equalizer", "Pre"),
+                            &mut preamp,
+                            on,
+                        ) {
+                            app.actions.push(Action::SetEqPreamp(preamp));
+                        }
+                        for (band, hz) in crate::eq::BANDS.iter().enumerate() {
+                            let mut gain = app.settings.eq_bands_db[band];
+                            if eq_slider(ui, &palette, &hertz(*hz), &mut gain, on) {
+                                app.actions.push(Action::SetEqBand(band, gain));
+                            }
+                        }
+                    });
                 }
                 ui.add_space(12.0);
                 let mut boost = app.settings.eq_bass_boost_db;

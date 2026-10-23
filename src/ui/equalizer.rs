@@ -18,6 +18,19 @@ const BAND_GAP: f32 = 8.0;
 /// the ten of them fit on one row.
 const BAND_ROOM: f32 = 72.0;
 
+#[cfg(feature = "demo")]
+thread_local! {
+    /// `--demo-show equalizer-end`: the equalizer page stays scrolled to its
+    /// end, for screenshots of its bands.
+    static DEMO_END: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Keeps the equalizer page scrolled to its end on this thread's windows.
+#[cfg(feature = "demo")]
+pub(crate) fn demo_scroll_to_end() {
+    DEMO_END.with(|scroll| scroll.set(true));
+}
+
 pub fn page(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let locale = app.locale;
@@ -39,7 +52,7 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
         ui,
         egui::ScrollArea::horizontal().id_salt("equalizer-presets"),
         egui::Vec2b::new(true, false),
-        |ui| settings::eq_preset_chips(app, ui),
+        |ui| settings::eq_preset_chips(app, ui, true),
     )
     .inner;
     ui.add_space(8.0);
@@ -48,23 +61,9 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
     eq_curve(ui, &palette, &crate::app::eq_settings(&app.settings));
     ui.add_space(16.0);
     let on = app.settings.eq_on;
-    band_grid(app, ui, on);
+    bands_and_preamp(app, ui, on);
     ui.add_space(12.0);
     let width = ui.available_width();
-    let range = crate::eq::RANGE_DB;
-    let mut preamp = app.settings.eq_preamp_db;
-    if eq_bar_slider(
-        ui,
-        &palette,
-        &gettext(locale, "Preamp"),
-        &mut preamp,
-        -range..=range,
-        on,
-        width,
-    ) {
-        app.actions.push(Action::SetEqPreamp(preamp));
-    }
-    ui.add_space(12.0);
     let mut boost = app.settings.eq_bass_boost_db;
     if eq_bar_slider(
         ui,
@@ -77,9 +76,36 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
     ) {
         app.actions.push(Action::SetEqBassBoost(boost));
     }
+    #[cfg(feature = "demo")]
+    if DEMO_END.with(std::cell::Cell::get) {
+        ui.scroll_to_cursor(Some(Align::Max));
+    }
 }
 
-/// The ten bands in a grid of equal columns: one row where the page holds
+/// The ten bands in a grid, then the preamp as a bar across the width: how
+/// a phone shows the equalizer's row of eleven sliders, here and in
+/// Settings. `on` dims them while the equalizer is off.
+pub(super) fn bands_and_preamp(app: &mut App, ui: &mut egui::Ui, on: bool) {
+    band_grid(app, ui, on);
+    ui.add_space(12.0);
+    let palette = app.palette;
+    let width = ui.available_width();
+    let range = crate::eq::RANGE_DB;
+    let mut preamp = app.settings.eq_preamp_db;
+    if eq_bar_slider(
+        ui,
+        &palette,
+        &gettext(app.locale, "Preamp"),
+        &mut preamp,
+        -range..=range,
+        on,
+        width,
+    ) {
+        app.actions.push(Action::SetEqPreamp(preamp));
+    }
+}
+
+/// The ten bands in a grid of equal columns: one row where the width holds
 /// them all, two rows of five on a phone. No column is narrower than a
 /// finger.
 fn band_grid(app: &mut App, ui: &mut egui::Ui, on: bool) {

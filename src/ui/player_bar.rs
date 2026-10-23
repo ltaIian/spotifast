@@ -142,8 +142,7 @@ fn mini_bar(app: &mut App, ui: &mut egui::Ui) {
     let fill = eased_fill(ui.ctx(), palette.panel, app.now_playing_tint());
     // The home indicator's band below the bar takes the bar's colour.
     if let Some(band) = super::home_indicator_band(ui.ctx()) {
-        let painter = ui.painter().with_clip_rect(band);
-        painter.rect_filled(band, 0.0, fill);
+        super::fill_band(ui, band, fill);
     }
     egui::Panel::bottom("player-bar")
         .exact_size(theme::MINI_BAR_HEIGHT)
@@ -303,8 +302,8 @@ fn play_button(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, size:
 
 /// What the compact layout's view of the playing song keeps clear below the
 /// cover: the song's name, where it has got to, the transport, and the rows
-/// of controls under it.
-const NOW_PLAYING_BELOW_COVER: f32 = 340.0;
+/// of controls under it, with the gaps between them.
+const NOW_PLAYING_BELOW_COVER: f32 = 390.0;
 
 /// The playing song's own view in the compact layout, which the player bar
 /// opens: the cover large, the song, where it has got to, the transport,
@@ -318,8 +317,7 @@ pub fn now_playing(app: &mut App, ui: &mut egui::Ui) {
     });
     // The status bar's band above takes the colour the view starts with.
     if let Some(band) = super::status_bar_band(ui.ctx()) {
-        let painter = ui.painter().with_clip_rect(band);
-        painter.rect_filled(band, 0.0, top);
+        super::fill_band(ui, band, top);
     }
     egui::CentralPanel::default()
         .frame(
@@ -442,6 +440,8 @@ fn now_playing_song(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>) 
     );
     words_ui.set_clip_rect(words.intersect(ui.clip_rect()));
     words_ui.spacing_mut().item_spacing.y = 4.0;
+    // Lines of words, not a row of finger-sized controls.
+    words_ui.spacing_mut().interact_size.y = 18.0;
     let Some(now) = now else {
         theme::text(
             &mut words_ui,

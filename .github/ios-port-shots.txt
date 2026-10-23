@@ -6,10 +6,12 @@
 # area of a phone with a Dynamic Island (59 points on top, 34 below) is kept
 # clear the way the real insets keep it. --demo-click taps a point, given in
 # points from the window's top left: 32,85 is the library button, 358,85 the
-# account, 150,778 the player bar.
+# account, 150,778 the player bar. --demo-drag holds a drag, here one that
+# scrolls the page.
 home|--demo-size 390x844 --demo-page home --demo-show ios
 playlist|--demo-size 390x844 --demo-page playlist:pl1 --demo-show ios
 equalizer|--demo-size 390x844 --demo-page equalizer --demo-show ios,eq-user-presets
+equalizer-bands|--demo-size 390x844 --demo-page equalizer --demo-show ios,eq-user-presets --demo-drag 8,700:8,400
 settings|--demo-size 390x844 --demo-page settings --demo-show ios
 settings-equalizer|--demo-size 390x844 --demo-page settings --demo-show ios,eq-user-presets,settings-equalizer
 signed-out|--demo-size 390x844 --demo-show ios,signed-out

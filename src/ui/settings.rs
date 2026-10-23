@@ -75,10 +75,10 @@ pub(crate) fn demo_scroll_to_equalizer() {
     DEMO_EQUALIZER.with(|scroll| scroll.set(true));
 }
 /// The equalizer's presets as chips, the built-in ones and then the ones
-/// saved here (#702), with the controls that save and delete those. A saved
-/// preset carries its preamp too, and is the current one when both it and a
-/// built-in one match.
-pub(super) fn eq_presets(app: &mut App, ui: &mut egui::Ui) {
+/// saved here (#702). A saved preset carries its preamp too, and is the
+/// current one when both it and a built-in one match. Returns the name of
+/// the saved preset in use, which [`eq_preset_controls`] offers to delete.
+pub(super) fn eq_preset_chips(app: &mut App, ui: &mut egui::Ui) -> Option<String> {
     let palette = app.palette;
     let built_in = crate::eq::PRESETS.len();
     let user_presets = app.settings.eq_user_presets.clone();
@@ -105,17 +105,12 @@ pub(super) fn eq_presets(app: &mut App, ui: &mut egui::Ui) {
             None => Action::ApplyEqPreset(picked),
         });
     }
-    ui.add_space(8.0);
-    eq_preset_controls(
-        app,
-        ui,
-        current_user.map(|index| user_presets[index].name.as_str()),
-    );
+    current_user.map(|index| user_presets[index].name.clone())
 }
 
 /// Saving the equalizer as a named preset, and deleting the saved preset
 /// that is in use (#702).
-fn eq_preset_controls(app: &mut App, ui: &mut egui::Ui, current: Option<&str>) {
+pub(super) fn eq_preset_controls(app: &mut App, ui: &mut egui::Ui, current: Option<&str>) {
     let palette = app.palette;
     let locale = app.locale;
     let name_id = ui.make_persistent_id("eq-preset-name");
@@ -2125,10 +2120,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     ];
     if section_matches(&needle, &equalizer, &equalizer_rows) {
         any_visible = true;
-        #[cfg(feature = "demo")]
-        if DEMO_EQUALIZER.with(std::cell::Cell::get) {
-            ui.scroll_to_cursor(Some(Align::Min));
-        }
         section(ui, &palette, &equalizer, |ui| {
             filtered_row(
                 ui,
@@ -2145,7 +2136,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             );
             let eq_extra_visible = equalizer_rows[1].matches(&needle, &equalizer);
             if eq_extra_visible {
-                eq_presets(app, ui);
+                let current = eq_preset_chips(app, ui);
+                ui.add_space(8.0);
+                eq_preset_controls(app, ui, current.as_deref());
                 ui.add_space(10.0);
                 eq_curve(ui, &palette, &crate::app::eq_settings(&app.settings));
                 ui.add_space(10.0);
@@ -2193,6 +2186,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 }
             }
         });
+        #[cfg(feature = "demo")]
+        if DEMO_EQUALIZER.with(std::cell::Cell::get) {
+            ui.scroll_to_cursor(Some(Align::Max));
+        }
     }
 
     let storage = gettext(locale, "Storage");

@@ -138,6 +138,14 @@ pub(crate) fn status_bar_band(ctx: &Context) -> Option<Rect> {
         .then(|| Rect::from_min_max(viewport.min, egui::pos2(viewport.right(), content.top())))
 }
 
+/// Fills `band`, outside the safe area, in `color`. A panel's own painter
+/// stops at the panel's edge, so this one is clipped to the band instead.
+pub(crate) fn fill_band(ui: &egui::Ui, band: Rect, color: Color32) {
+    let mut painter = ui.painter().clone();
+    painter.set_clip_rect(band);
+    painter.rect_filled(band, 0.0, color);
+}
+
 /// The band below the safe area that a phone's home indicator covers, if
 /// any. The player bar fills it in its own colour.
 pub(crate) fn home_indicator_band(ctx: &Context) -> Option<Rect> {
@@ -467,11 +475,10 @@ fn central(app: &mut App, ui: &mut egui::Ui) {
             // On a phone the status bar sits over the band above the page,
             // which takes the colour of the page's top edge.
             if let Some(band) = status_bar_band(ui.ctx()) {
-                let painter = ui.painter().with_clip_rect(band);
-                painter.rect_filled(band, 0.0, palette.window);
+                fill_band(ui, band, palette.window);
                 if let Some((top, bottom)) = wash {
                     let shown = (scrolled / HEADER_WASH_HEIGHT).clamp(0.0, 1.0);
-                    painter.rect_filled(band, 0.0, top.lerp_to_gamma(bottom, shown));
+                    fill_band(ui, band, top.lerp_to_gamma(bottom, shown));
                 }
             }
             ui.spacing_mut().item_spacing = vec2(8.0, 6.0);

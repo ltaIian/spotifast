@@ -1425,8 +1425,8 @@ fn plays_fit(width: f32) -> bool {
 
 /// Whether a song list `width` wide takes a phone's columns: on a touch
 /// screen with no room for the album, the cover carries the play control,
-/// the heart and the length make way for the title, and the table's
-/// headings with them.
+/// the heart makes way for the title and the length narrows, and the
+/// table's headings go.
 pub fn phone_columns(ctx: &egui::Context, width: f32) -> bool {
     theme::touch(ctx) && width <= 560.0
 }
@@ -1463,13 +1463,7 @@ fn columns(width: f32, row: &TrackRow<'_>, touch: bool, phone: bool) -> Columns 
             0.0
         },
         heart: if row.compact || phone { 0.0 } else { 36.0 },
-        duration: if row.compact {
-            44.0
-        } else if phone {
-            0.0
-        } else {
-            56.0
-        },
+        duration: if row.compact || phone { 44.0 } else { 56.0 },
         // Without a pointer's right click, the menu needs its button.
         more: if touch {
             theme::TOUCH_TARGET

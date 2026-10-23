@@ -9,7 +9,7 @@ use crate::i18n::gettext;
 use crate::model::Action;
 use crate::theme;
 
-use super::settings::{eq_bar_slider, eq_curve, eq_presets, eq_slider, eq_slider_width, hertz};
+use super::settings::{self, eq_bar_slider, eq_curve, eq_slider, eq_slider_width, hertz};
 use super::widgets;
 
 /// The gap between the columns of band sliders.
@@ -33,7 +33,17 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
         });
     });
     ui.add_space(12.0);
-    eq_presets(app, ui);
+    // One row of chips that scrolls sideways, so the curve and the bands
+    // stay in view.
+    let current = crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::horizontal().id_salt("equalizer-presets"),
+        egui::Vec2b::new(true, false),
+        |ui| settings::eq_preset_chips(app, ui),
+    )
+    .inner;
+    ui.add_space(8.0);
+    settings::eq_preset_controls(app, ui, current.as_deref());
     ui.add_space(12.0);
     eq_curve(ui, &palette, &crate::app::eq_settings(&app.settings));
     ui.add_space(16.0);

@@ -185,6 +185,11 @@ pub(super) fn hero(app: &mut App, ui: &mut egui::Ui, hero: Hero<'_>) {
             }
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
+                // Lines of words and links: on a phone they keep the
+                // pointer's line height, not a finger's row.
+                if theme::touch(ui.ctx()) {
+                    ui.spacing_mut().interact_size.y = 28.0;
+                }
                 if let Some(avatar) = &hero.avatar {
                     let size = 18.0;
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());

@@ -31,10 +31,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, connecting: bool) {
             super::widgets::paint_vertical_gradient(ui, rect, top, palette.window);
             // A phone's status bar and home indicator sit over the gradient's ends.
             if let Some(band) = super::status_bar_band(ui.ctx()) {
-                ui.painter().with_clip_rect(band).rect_filled(band, 0.0, top);
+                super::fill_band(ui, band, top);
             }
             if let Some(band) = super::home_indicator_band(ui.ctx()) {
-                ui.painter().with_clip_rect(band).rect_filled(band, 0.0, palette.window);
+                super::fill_band(ui, band, palette.window);
             }
             // On a phone the card spans the screen, less a margin, and sits
             // near the top, clear of the keyboard.

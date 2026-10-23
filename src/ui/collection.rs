@@ -49,6 +49,10 @@ pub(super) struct HeroImages<'a> {
 /// The larger of the hero's two cover sizes.
 const HERO_ART: f32 = 212.0;
 
+/// Below this width the compact layout stacks the hero: the cover above the
+/// words, as a phone shows it.
+const STACKED_HERO_WIDTH: f32 = 480.0;
+
 /// The artwork widths a page header asks for on this display: its own
 /// cover, and the card's, which the page was likely opened from and so is
 /// already loaded.
@@ -99,13 +103,19 @@ pub(super) fn hero(app: &mut App, ui: &mut egui::Ui, hero: Hero<'_>) {
         .thumbnail
         .and_then(|uri| app.softened_covers.texture(ui.ctx(), &art, uri));
     ui.add_space(12.0);
-    let cover_size = if ui.available_width() > 720.0 {
+    let stacked = theme::compact(ui.ctx()) && ui.available_width() < STACKED_HERO_WIDTH;
+    let cover_size = if stacked {
+        (ui.available_width() * 0.62).min(240.0)
+    } else if ui.available_width() > 720.0 {
         HERO_ART
     } else {
         160.0
     };
-    ui.horizontal(|ui| {
+    let body = |ui: &mut egui::Ui| {
         ui.spacing_mut().item_spacing.x = 24.0;
+        if stacked {
+            ui.spacing_mut().item_spacing.y = 16.0;
+        }
         // Clicking the cover shows it enlarged (#586).
         let enlarged = hero.images.enlarged.filter(|_| !hero.liked);
         let (rect, response) = ui.allocate_exact_size(
@@ -158,9 +168,17 @@ pub(super) fn hero(app: &mut App, ui: &mut egui::Ui, hero: Hero<'_>) {
             let width = ui.available_width();
             ui.set_width(width);
             ui.spacing_mut().item_spacing.y = 6.0;
-            ui.add_space(cover_size * 0.08);
+            if !stacked {
+                ui.add_space(cover_size * 0.08);
+            }
             theme::text(ui, hero.kind.as_ref(), theme::medium(12.5), palette.text);
-            let mut size = if cover_size > 200.0 { 56.0 } else { 40.0 };
+            let mut size = if stacked {
+                28.0
+            } else if cover_size > 200.0 {
+                56.0
+            } else {
+                40.0
+            };
             loop {
                 let galley = ui.painter().layout_no_wrap(
                     hero.title.to_string(),
@@ -183,13 +201,14 @@ pub(super) fn hero(app: &mut App, ui: &mut egui::Ui, hero: Hero<'_>) {
                     palette.secondary,
                 );
             }
+            // Lines of words and links: on a phone they keep the pointer's
+            // line height, not a finger's row.
+            let interact = ui.spacing().interact_size;
+            if theme::touch(ui.ctx()) {
+                ui.spacing_mut().interact_size.y = 28.0;
+            }
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                // Lines of words and links: on a phone they keep the
-                // pointer's line height, not a finger's row.
-                if theme::touch(ui.ctx()) {
-                    ui.spacing_mut().interact_size.y = 28.0;
-                }
                 if let Some(avatar) = &hero.avatar {
                     let size = 18.0;
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
@@ -224,8 +243,14 @@ pub(super) fn hero(app: &mut App, ui: &mut egui::Ui, hero: Hero<'_>) {
                     }
                 }
             });
+            ui.spacing_mut().interact_size = interact;
         });
-    });
+    };
+    if stacked {
+        ui.vertical_centered(body);
+    } else {
+        ui.horizontal(body);
+    }
     ui.add_space(20.0);
 }
 

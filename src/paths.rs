@@ -69,15 +69,16 @@ impl AppDirs {
         });
         let dirs = found.dirs.map_or_else(Self::fallback, Self::from);
         let mut lines: Vec<_> = describe(&dirs, &found.mode).into_iter().collect();
+        let portable = matches!(found.mode, fastframe_dirs::Mode::Portable { .. });
         // Its sign-in follows the folder when it moves to another drive, as
         // an iOS app's container can on any launch or update.
-        if matches!(found.mode, fastframe_dirs::Mode::Portable { .. }) || cfg!(target_os = "ios") {
-            if let Err(error) = crate::credentials::keep_profile(&dirs.state) {
-                lines.push((
-                    log::Level::Warn,
-                    format!("unable to record the credential profile: {error}"),
-                ));
-            }
+        if (portable || cfg!(target_os = "ios"))
+            && let Err(error) = crate::credentials::keep_profile(&dirs.state)
+        {
+            lines.push((
+                log::Level::Warn,
+                format!("unable to record the credential profile: {error}"),
+            ));
         }
         Found { dirs, lines }
     }

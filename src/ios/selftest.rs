@@ -64,7 +64,9 @@ impl SignIn {
     }
 
     pub fn poll(&mut self, app: &mut App) {
-        if matches!(app.auth, AuthStatus::SignedOut) && let Some(action) = self.action.take() {
+        if matches!(app.auth, AuthStatus::SignedOut)
+            && let Some(action) = self.action.take()
+        {
             log::info!("selftest: starting the sign-in with {action:?}, as its button does");
             app.actions.push(action);
         }

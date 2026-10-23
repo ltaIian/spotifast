@@ -330,6 +330,28 @@ impl ProtectedStore for NativeStore {
     }
 }
 
+/// Writes, reads back and deletes a throwaway entry through the store and
+/// the entry settings the grants use, for the iOS self-test. The entry holds
+/// nothing secret, so the store's own error, with its status code, is shown.
+#[cfg(target_os = "ios")]
+pub fn self_test() -> Result<&'static str, String> {
+    let secret = b"spotifast self-test";
+    let entry = NativeStore::default()
+        .entry("self-test")
+        .map_err(|error| format!("open: {error}"))?;
+    entry
+        .set_secret(secret)
+        .map_err(|error| format!("write: {error:?}"))?;
+    let read = entry.get_secret();
+    let deleted = entry.delete_credential();
+    match (read, deleted) {
+        (Ok(found), Ok(())) if found == secret => Ok("written, read back and deleted"),
+        (Ok(_), Ok(())) => Err("read back something else".to_owned()),
+        (Err(error), _) => Err(format!("read: {error:?}")),
+        (Ok(_), Err(error)) => Err(format!("delete: {error:?}")),
+    }
+}
+
 /// Credential Manager first, and a copy sealed for this Windows user in the
 /// state directory. On some machines Credential Manager refuses the write
 /// (#748) or drops the entries during a restart (#815); the sealed copy then

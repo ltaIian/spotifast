@@ -1,0 +1,186 @@
+//! The iOS app: what the Xcode project's Swift code starts and calls back.
+//!
+//! winit's iOS event loop calls `UIApplicationMain` itself and refuses to
+//! start once a `UIApplication` exists, so the app has no delegate of its
+//! own: `ios/Sources/main.swift` sets up the audio session, asks to hear when
+//! the app goes to the background, and calls [`run`], which never returns.
+//! `run` does what the desktop's entry (`src/entrypoint.rs`) and
+//! fastframe-shell do, for one window that lasts as long as the app.
+
+mod selftest;
+
+use std::cell::RefCell;
+use std::path::PathBuf;
+use std::rc::Rc;
+
+use crate::app::{App, AppOptions};
+use crate::backend::Waker;
+use crate::paths::AppDirs;
+use crate::settings::Settings;
+
+/// The log's default filter, as on the desktop.
+const LOG_FILTER: &str = "warn,spotifast=info,fastframe_fonts=info";
+
+thread_local! {
+    /// The app, for the hooks Swift calls on the main thread while UIKit
+    /// runs the window: `None` until the window exists.
+    static APP: RefCell<Option<Rc<RefCell<App>>>> = const { RefCell::new(None) };
+}
+
+/// Starts Spotifast: the log, the settings and the app, then UIKit's main
+/// loop with the app in its one window. Call it once, on the main thread.
+/// It never returns.
+pub fn run() -> ! {
+    // Before any output is listed or opened.
+    crate::sink::name_in_mixers();
+    let folders = AppDirs::discover();
+    let dirs = folders.dirs.clone();
+    let dirs_ready = dirs.ensure();
+    // The log and the panic log go in the app's own container, where Xcode
+    // or a sideloading tool can fetch them for a bug report.
+    if let Err(error) = fastframe_log::Logging::new("spotifast", env!("CARGO_PKG_VERSION"))
+        .filter(LOG_FILTER)
+        .file(dirs.log_file())
+        .panic_log(dirs.panic_log())
+        .panic_message(fastframe_log::PanicMessage::Redacted(
+            fastframe_log::redact::links,
+        ))
+        .init()
+    {
+        eprintln!("not logging: {error}");
+    }
+    folders.log();
+    if let Err(error) = dirs_ready {
+        log::warn!("unable to create the application directories: {error}");
+    }
+    let self_test = selftest::requested();
+    if self_test {
+        selftest::start();
+    }
+    let mut settings = Settings::load(&dirs.settings_file());
+    keep_to_one_window(&mut settings);
+    crate::emoji::install(false);
+    let storage = eframe_storage(&dirs);
+    let waker = Waker::default();
+    let options = AppOptions {
+        restore_sign_in: true,
+        media_controls: false,
+        tray: false,
+        autostart: false,
+    };
+    let mut app = App::new(&waker, dirs, settings, options);
+    app.load_custom_themes(&waker);
+    // The window is the screen: the app never asks it to grow.
+    crate::window::set_fixed_size(true);
+    let app = Rc::new(RefCell::new(app));
+    let creator: eframe::AppCreator<'_> = Box::new(move |cc| {
+        waker.attach(&cc.egui_ctx);
+        app.borrow_mut().attach(&cc.egui_ctx);
+        APP.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
+        Ok(Box::new(Window {
+            app,
+            insets: self_test.then(selftest::Insets::default),
+        }))
+    });
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_title("Spotifast"),
+        persistence_path: Some(storage),
+        ..Default::default()
+    };
+    // From here this thread draws the window: a durable write on it is
+    // caught, as on the desktop.
+    fastframe_file::mark_ui_thread();
+    let result = eframe::run_native("Spotifast", options, creator);
+    // UIKit's main loop never returns, so this is a failure to start it.
+    match result {
+        Ok(()) => log::error!("the event loop returned"),
+        Err(error) => log::error!("Native window failed: {error}"),
+    }
+    std::process::exit(1)
+}
+
+/// The app has gone to the background, where iOS may suspend it at any
+/// moment and end it without warning: save what quitting would.
+pub fn will_background() {
+    with_app("background", save);
+}
+
+/// The app is about to end: save what quitting would. The process ends right
+/// after, with playback and the network, so nothing waits for them.
+pub fn will_terminate() {
+    with_app("terminate", save);
+}
+
+/// Saves the settings and the session, and waits a bounded time for the
+/// files to reach the disk, as the desktop does when its window closes.
+fn save(app: &mut App) {
+    app.save_state();
+    app.flush_files();
+}
+
+/// Runs `act` on the app, if its window exists and is not drawing.
+fn with_app(when: &str, act: impl FnOnce(&mut App)) {
+    APP.with(|slot| {
+        let Some(app) = slot.borrow().clone() else {
+            log::info!("{when}: no window yet, nothing to save");
+            return;
+        };
+        match app.try_borrow_mut() {
+            Ok(mut app) => act(&mut app),
+            Err(_) => log::warn!("{when}: the window is busy, nothing saved"),
+        }
+    });
+}
+
+/// The settings that describe the desktop's other windows and its updates,
+/// held off for this run in memory only: an iOS app has one window, and a
+/// sideloaded one cannot replace itself. They are saved as they are only
+/// when something else changes.
+fn keep_to_one_window(settings: &mut Settings) {
+    settings.winamp_window = false;
+    settings.milkdrop_open = false;
+    settings.check_for_updates = false;
+    settings.download_updates_automatically = false;
+}
+
+/// Where eframe keeps its own state: where it would on macOS, as it finds no
+/// folder of its own on iOS.
+fn eframe_storage(dirs: &AppDirs) -> PathBuf {
+    match std::env::home_dir() {
+        Some(home) => home.join("Library/Application Support/spotifast/app.ron"),
+        None => dirs.config.join("app.ron"),
+    }
+}
+
+/// eframe's side of the one window: each frame goes to the app, which lasts
+/// as long as the process.
+struct Window {
+    app: Rc<RefCell<App>>,
+    /// What the self-test reports of the window, when it runs.
+    insets: Option<selftest::Insets>,
+}
+
+impl eframe::App for Window {
+    /// egui's memory stays out of the saved state, as on the desktop: its
+    /// options carry a zoom, and the app keeps its own.
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
+
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(insets) = &mut self.insets {
+            insets.report(ctx);
+        }
+        self.app.borrow_mut().background_frame(ctx);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.app.borrow_mut().frame_ui(ui);
+    }
+
+    /// iOS ends an app without calling this; [`will_background`] saves
+    /// instead.
+    fn on_exit(&mut self) {
+        save(&mut self.app.borrow_mut());
+    }
+}

@@ -262,6 +262,10 @@ apple-native-keyring-store = { version = "1.0.2", features = ["protected"] }
 # and without it local times would show in UTC. The zone's name comes in
 # the TZ variable.
 jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
+# The self-test logs the default output's configuration
+# (src/ios/selftest.rs). The same cpal as fastframe-audio's, through the
+# patch below.
+cpal = "0.18"
 
 [build-dependencies]
 # Drops unfinished PO entries and compiles catalog text and gettext plural

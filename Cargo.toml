@@ -126,8 +126,11 @@ raw-window-handle = "0.6"
 # it (see [patch.crates-io]) onto rustls 0.23 so CONNECT-then-TLS uses the
 # same stack as the rest of the client. SOCKS5 still covers the Web API but
 # not the engine: librespot only speaks HTTP CONNECT.
-librespot-core = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
-librespot-playback = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
+#
+# The certificate roots librespot and reqwest trust are chosen per target
+# in the target tables below.
+librespot-core = { version = "0.8", default-features = false }
+librespot-playback = { version = "0.8", default-features = false }
 librespot-connect = { version = "0.8", default-features = false }
 librespot-metadata = { version = "0.8", default-features = false }
 librespot-protocol = { version = "0.8", default-features = false }
@@ -142,7 +145,7 @@ rodio = { version = "0.21", default-features = false }
 # update checks. HTTP proxies work without it. `system-proxy` reads the OS
 # proxy on macOS and Windows when the mode is System; Linux uses environment
 # variables either way.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json", "gzip", "http2", "blocking", "socks", "system-proxy"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "http2", "blocking", "socks", "system-proxy"] }
 # Same System-proxy matcher reqwest uses, so local playback follows the same
 # HTTP proxy (environment, and the OS proxy on macOS and Windows).
 hyper-util = { version = "0.1", default-features = false, features = ["client-proxy", "client-proxy-system"] }
@@ -212,7 +215,7 @@ zbus = { version = "5", default-features = false, features = ["tokio"] }
 # compiles this version.
 x11rb = { version = "0.13", default-features = false }
 
-# Every target but iOS: what does not build for iOS.
+# Every target but iOS.
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 # glow keeps the binary and the dependency tree small; wgpu is not needed
 # for a 2D music client. Its GL contexts come from glutin, which has no iOS
@@ -231,6 +234,11 @@ fastframe-titlebar = { git = "https://github.com/crmne/fastframe", tag = "v0.14.
 # Native asynchronous file selection on macOS, Windows and Linux desktop
 # portals. It has no iOS backend (src/backend.rs, `no_file_dialog`).
 rfd = "0.17.2"
+# The system's certificate roots, for librespot (its HTTP client, the proxy
+# connector and the dealer's WebSocket follow librespot-core) and reqwest.
+librespot-core = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
+librespot-playback = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 # iOS draws the UI with wgpu on Metal. eframe's `wgpu` feature would build
@@ -239,6 +247,14 @@ rfd = "0.17.2"
 # uses.
 eframe = { version = "0.36.2", default-features = false, features = ["wgpu_no_default_features"] }
 wgpu = { version = "30", default-features = false, features = ["metal", "wgsl", "std"] }
+# Mozilla's certificate roots, built in. rustls-native-certs finds no roots
+# on iOS (it reads certificate files that iOS does not have), so with the
+# system's roots every TLS connection fails, and librespot's HTTP client
+# aborts the app. librespot takes these roots alone: with both, it would
+# still load the system's first and fail.
+librespot-core = { version = "0.8", default-features = false, features = ["rustls-tls-webpki-roots"] }
+librespot-playback = { version = "0.8", default-features = false, features = ["rustls-tls-webpki-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots"] }
 
 [build-dependencies]
 # Drops unfinished PO entries and compiles catalog text and gettext plural

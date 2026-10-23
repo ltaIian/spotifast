@@ -933,9 +933,7 @@ impl App {
         let plays = crate::history::History::load(&dirs.history_file());
         let tap = crate::vis::AudioTap::new();
         let eq = crate::eq::shared();
-        if let Ok(mut shared) = eq.lock() {
-            *shared = eq_settings(&settings);
-        }
+        eq.set(eq_settings(&settings));
         let applied_proxy_preferences = settings.proxy_preferences();
         let applied_proxy = match settings.proxy_config() {
             Ok(proxy) => proxy,
@@ -946,7 +944,7 @@ impl App {
             &settings,
             applied_proxy.clone(),
             std::sync::Arc::clone(&tap),
-            std::sync::Arc::clone(&eq),
+            eq.clone(),
         );
         let backend = Backend::spawn(
             dirs.clone(),
@@ -4043,9 +4041,7 @@ impl App {
 
     /// Sends equalizer settings to the player and marks them for saving.
     fn push_eq(&mut self) {
-        if let Ok(mut shared) = self.winamp.eq.lock() {
-            *shared = eq_settings(&self.settings);
-        }
+        self.winamp.eq.set(eq_settings(&self.settings));
         self.settings_dirty = true;
     }
 
@@ -11438,7 +11434,7 @@ impl App {
                     &self.settings,
                     self.applied_proxy.clone(),
                     std::sync::Arc::clone(&self.winamp.tap),
-                    std::sync::Arc::clone(&self.winamp.eq),
+                    self.winamp.eq.clone(),
                 );
                 self.backend.send(Command::RestartEngine(config));
                 if self.local_ready {
@@ -21852,7 +21848,7 @@ mod tests {
         assert_eq!(app.settings.eq_bands_db, correction);
         assert_eq!(app.settings.eq_preamp_db, -3.0);
         assert!(app.settings.eq_on);
-        assert_eq!(app.winamp.eq.lock().unwrap().bands_db, correction);
+        assert_eq!(app.winamp.eq.get().bands_db, correction);
 
         app.settings.eq_preamp_db = -6.0;
         app.apply(Action::SaveEqPreset("AirPods".into()), &ctx);

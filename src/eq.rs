@@ -1,13 +1,14 @@
 //! Ten-band equalizer for local playback.
 //!
 //! Each Winamp band uses a second-order peaking filter. Bands and preamp range
-//! from -12 to +12 dB. The UI writes settings behind a mutex; the player reads
-//! them once per packet and rebuilds filters only after changes.
+//! from -12 to +12 dB. The UI writes settings into a cell the player reads
+//! once per packet without a lock, rebuilding filters only after changes.
 //!
 //! This stage does not clip boosted samples. `vis::Tapped` limits the signal
 //! later, after accounting for output volume.
 
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use librespot_playback::{NUM_CHANNELS, SAMPLE_RATE};
 
@@ -342,11 +343,116 @@ pub const PRESETS: &[Preset] = &[
     },
 ];
 
+/// Words in a settings snapshot: the switch, mono, the preamp, the balance
+/// and the bass boost, then the ten bands, each float by its bits.
+const WORDS: usize = 15;
+/// Reads the player's thread tries, each having met a write under way,
+/// before it keeps the settings it has until the next packet.
+const READ_ATTEMPTS: usize = 64;
+
 /// The settings as the window and the player's thread share them.
-pub type SharedEq = Arc<Mutex<EqSettings>>;
+///
+/// A sequence lock over atomic words. A write makes the sequence odd, stores
+/// the words and makes it even again; a read that finds the same even
+/// sequence before and after taking the words took one whole snapshot.
+/// Writers take turns behind a mutex. Readers never lock or wait for one, so
+/// the player's thread never stalls behind the window.
+#[derive(Clone)]
+pub struct SharedEq(Arc<SnapshotCell>);
+
+struct SnapshotCell {
+    sequence: AtomicU64,
+    words: [AtomicU32; WORDS],
+    /// Lets one writer in at a time; readers never touch it.
+    writer: Mutex<()>,
+}
 
 pub fn shared() -> SharedEq {
-    Arc::new(Mutex::new(EqSettings::default()))
+    SharedEq(Arc::new(SnapshotCell {
+        sequence: AtomicU64::new(0),
+        words: encode(&EqSettings::default()).map(AtomicU32::new),
+        writer: Mutex::new(()),
+    }))
+}
+
+impl SharedEq {
+    /// Replaces the whole settings snapshot. For the UI thread.
+    pub fn set(&self, settings: EqSettings) {
+        let cell = &*self.0;
+        let _turn = cell.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        let sequence = &cell.sequence;
+        let start = sequence.load(Ordering::Relaxed);
+        sequence.store(start.wrapping_add(1), Ordering::Relaxed);
+        // The words below cannot be seen before the odd sequence.
+        fence(Ordering::Release);
+        for (word, value) in cell.words.iter().zip(encode(&settings)) {
+            word.store(value, Ordering::Relaxed);
+        }
+        sequence.store(start.wrapping_add(2), Ordering::Release);
+    }
+
+    /// The latest snapshot, from any thread. It never takes a lock: a read
+    /// that meets a write under way reads again.
+    pub fn get(&self) -> EqSettings {
+        loop {
+            if let Some(settings) = self.try_get() {
+                return settings;
+            }
+            std::thread::yield_now();
+        }
+    }
+
+    /// The latest snapshot, or `None` when each of `READ_ATTEMPTS` reads met
+    /// a write under way. What the player's thread reads with: a bounded
+    /// number of tries, and no lock.
+    fn try_get(&self) -> Option<EqSettings> {
+        let cell = &*self.0;
+        for _ in 0..READ_ATTEMPTS {
+            let before = cell.sequence.load(Ordering::Acquire);
+            if before.is_multiple_of(2) {
+                let words = cell.words.each_ref().map(|w| w.load(Ordering::Relaxed));
+                // The words above cannot be read after the sequence below.
+                fence(Ordering::Acquire);
+                if cell.sequence.load(Ordering::Relaxed) == before {
+                    return Some(decode(words));
+                }
+            }
+            std::hint::spin_loop();
+        }
+        None
+    }
+}
+
+impl std::fmt::Debug for SharedEq {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("SharedEq").field(&self.get()).finish()
+    }
+}
+
+/// The settings as words: the switch, mono, the preamp, the balance, the
+/// bass boost, then the bands.
+fn encode(settings: &EqSettings) -> [u32; WORDS] {
+    let mut words = [0; WORDS];
+    words[0] = u32::from(settings.on);
+    words[1] = u32::from(settings.mono);
+    words[2] = settings.preamp_db.to_bits();
+    words[3] = settings.balance.to_bits();
+    words[4] = settings.bass_boost_db.to_bits();
+    for (word, band) in words[5..].iter_mut().zip(settings.bands_db) {
+        *word = band.to_bits();
+    }
+    words
+}
+
+fn decode(words: [u32; WORDS]) -> EqSettings {
+    EqSettings {
+        on: words[0] != 0,
+        preamp_db: f32::from_bits(words[2]),
+        bands_db: std::array::from_fn(|band| f32::from_bits(words[5 + band])),
+        balance: f32::from_bits(words[3]),
+        mono: words[1] != 0,
+        bass_boost_db: f32::from_bits(words[4]),
+    }
 }
 
 /// A second-order section in direct form I, one per band and channel.
@@ -451,9 +557,10 @@ impl Processor {
 
     /// Runs interleaved stereo samples through the equalizer, in place.
     pub fn process(&mut self, samples: &mut [f64]) {
+        // A read that keeps meeting a write keeps the settings applied.
         let wanted = self
             .shared
-            .lock()
+            .try_get()
             .map(|settings| settings.clamped())
             .unwrap_or(self.applied);
         if wanted != self.applied {
@@ -514,9 +621,13 @@ mod tests {
 
     #[test]
     fn a_boosted_band_makes_its_tone_louder_and_leaves_others_alone() {
+        let mut settings = EqSettings {
+            on: true,
+            ..EqSettings::default()
+        };
+        settings.bands_db[4] = 12.0; // 1 kHz
         let shared = shared();
-        shared.lock().unwrap().on = true;
-        shared.lock().unwrap().bands_db[4] = 12.0; // 1 kHz
+        shared.set(settings);
         let mut processor = Processor::new(shared);
         let mut at_band = tone(1000.0, 8192);
         let before = rms(&at_band[4096..]);
@@ -542,18 +653,24 @@ mod tests {
         processor.process(&mut samples);
         assert_eq!(samples, original);
 
-        shared.lock().unwrap().on = true;
+        let mut settings = EqSettings {
+            on: true,
+            ..EqSettings::default()
+        };
+        shared.set(settings);
         let mut samples = original.clone();
         processor.process(&mut samples);
         assert_eq!(samples, original);
 
-        shared.lock().unwrap().preamp_db = 6.0;
+        settings.preamp_db = 6.0;
+        shared.set(settings);
         let mut samples = original.clone();
         processor.process(&mut samples);
         let ratio = rms(&samples) / rms(&original);
         assert!((20.0 * ratio.log10() - 6.0).abs() < 0.1);
 
-        shared.lock().unwrap().preamp_db = -6.0;
+        settings.preamp_db = -6.0;
+        shared.set(settings);
         let mut samples = original.clone();
         processor.process(&mut samples);
         let ratio = rms(&samples) / rms(&original);
@@ -582,12 +699,17 @@ mod tests {
         let shared = shared();
         let mut processor = Processor::new(shared.clone());
         let mut samples = vec![0.5, -0.25, 0.5, -0.25];
-        shared.lock().unwrap().balance = 0.5;
+        let mut settings = EqSettings {
+            balance: 0.5,
+            ..EqSettings::default()
+        };
+        shared.set(settings);
         processor.process(&mut samples);
         assert_eq!(samples, vec![0.25, -0.25, 0.25, -0.25]);
 
-        shared.lock().unwrap().balance = 0.0;
-        shared.lock().unwrap().mono = true;
+        settings.balance = 0.0;
+        settings.mono = true;
+        shared.set(settings);
         let mut samples = vec![0.5, -0.25];
         processor.process(&mut samples);
         assert_eq!(samples, vec![0.125, 0.125]);
@@ -689,5 +811,60 @@ mod tests {
                 preset.name
             );
         }
+    }
+
+    /// One thread writes two whole snapshots in turn while another reads:
+    /// every read is one of the two, never part of each.
+    #[test]
+    fn a_read_never_sees_half_a_write() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize};
+        let first = EqSettings {
+            on: true,
+            preamp_db: -6.0,
+            bands_db: [3.0; 10],
+            balance: -0.5,
+            mono: false,
+            bass_boost_db: 12.0,
+        };
+        let second = EqSettings {
+            on: false,
+            preamp_db: 6.0,
+            bands_db: [-3.0; 10],
+            balance: 0.5,
+            mono: true,
+            bass_boost_db: 0.5,
+        };
+        let shared = shared();
+        shared.set(first);
+        let stop = Arc::new(AtomicBool::new(false));
+        let writes = Arc::new(AtomicUsize::new(0));
+        let writer = {
+            let shared = shared.clone();
+            let stop = Arc::clone(&stop);
+            let writes = Arc::clone(&writes);
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    shared.set(second);
+                    shared.set(first);
+                    writes.fetch_add(2, Ordering::Relaxed);
+                    // A breath between writes, so reads also land between
+                    // them and not only across them.
+                    for _ in 0..64 {
+                        std::hint::spin_loop();
+                    }
+                }
+            })
+        };
+        let mut reads = 0;
+        while reads < 20_000 || writes.load(Ordering::Relaxed) < 20_000 {
+            let seen = shared.get();
+            assert!(seen == first || seen == second, "a torn read: {seen:?}");
+            if let Some(seen) = shared.try_get() {
+                assert!(seen == first || seen == second, "a torn read: {seen:?}");
+            }
+            reads += 1;
+        }
+        stop.store(true, Ordering::Relaxed);
+        writer.join().unwrap();
     }
 }

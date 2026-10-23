@@ -1,0 +1,39 @@
+# The unsigned iOS app, Spotifast-<version>-ios-unsigned.ipa, for
+# sideloading with AltStore, SideStore or Sideloadly, which sign it with the
+# user's own Apple ID. scripts/build-ipa.sh builds it on a macOS runner and
+# the run keeps it as an artifact. It runs for every push to the iOS port's
+# integration branch, and by hand from the Actions tab.
+name: iOS app (.ipa)
+
+on:
+  push:
+    branches: [ios-port]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ipa:
+    name: unsigned .ipa
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      # rust-toolchain.toml pins the toolchain, so the iOS standard library
+      # is added after the checkout, where rustup resolves to that toolchain.
+      - name: iOS standard library
+        run: rustup target add aarch64-apple-ios
+      # No compiler cache: like the release builds, the app people install
+      # never builds from outputs restored from an Actions cache.
+      - name: Build the .ipa
+        run: bash scripts/build-ipa.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Spotifast-ios-unsigned-ipa-${{ github.sha }}
+          path: dist/*.ipa
+          if-no-files-found: error

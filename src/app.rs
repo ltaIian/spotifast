@@ -54,6 +54,7 @@ const SUSPEND_FLUSH_TIMEOUT: Duration = Duration::from_millis(1500);
 /// How old the saved resume point may grow while music plays.
 const SESSION_REFRESH: Duration = Duration::from_secs(30);
 /// The longest the app sleeps in the tray with nothing due.
+#[cfg(not(target_os = "ios"))]
 const HEADLESS_SLEEP: Duration = Duration::from_secs(2);
 /// How long a playlist list Spotify turned away waits before it is asked
 /// for again.
@@ -607,7 +608,7 @@ pub struct App {
     /// The main window's size, position and maximized state: from the
     /// session file, followed in each logic pass while that window is open,
     /// and given to the next one before it is made.
-    pub window_geometry: fastframe_shell::window::Geometry,
+    pub window_geometry: crate::shell::window::Geometry,
     /// The mode to return the window to when the app closed in
     /// fullscreen lyrics.
     session_lyrics_fullscreen_from: Option<crate::settings::WindowMode>,
@@ -788,7 +789,8 @@ const TRAY_PREVIOUS: &str = "previous";
 const TRAY_QUIT: &str = "quit";
 
 /// What the shell around `eframe::run_native` does with the app between
-/// windows.
+/// windows. The desktop's alone: an iOS app keeps its one window.
+#[cfg(not(target_os = "ios"))]
 impl fastframe_shell::Resident for App {
     /// Quit wins; switching between the main window and the mini player
     /// opens the other at once; closing to the tray runs without a window.
@@ -852,6 +854,7 @@ impl fastframe_shell::Resident for App {
 /// How long a hidden start waits for a panel to show the tray item before it
 /// opens the window. GNOME's AppIndicator extension, for one, loads after
 /// the session's autostart apps.
+#[cfg(not(target_os = "ios"))]
 const TRAY_WAIT: Duration = Duration::from_secs(30);
 
 /// The tray menu's Play or Pause entry, for what is playing.
@@ -1193,7 +1196,7 @@ impl App {
             remote_recheck_at: None,
             seek_preview: None,
             volume_preview: None,
-            window_geometry: fastframe_shell::window::Geometry {
+            window_geometry: crate::shell::window::Geometry {
                 size: crate::window::usable_size(session.window_size),
                 position: session.window_pos,
                 maximized: session.window_maximized,
@@ -1391,6 +1394,7 @@ impl App {
     /// Runs without a window from the start. The macOS menu-bar item is
     /// otherwise made when a window attaches the tray, so it is made now;
     /// a tray no panel shows yet gets [`TRAY_WAIT`] to appear.
+    #[cfg(not(target_os = "ios"))]
     fn begin_hidden_start(&mut self, now: Instant) {
         self.window_hidden = true;
         if let Some(tray) = &mut self.tray {
@@ -1403,6 +1407,7 @@ impl App {
 
     /// Ends a hidden start's wait for a panel: a panel showing the tray
     /// item keeps the window hidden, and none by the deadline shows it.
+    #[cfg(not(target_os = "ios"))]
     fn check_tray_wait(&mut self, now: Instant, tray_shown: bool) {
         let Some(deadline) = self.tray_wait else {
             return;
@@ -3677,7 +3682,7 @@ impl App {
         // Each new main window takes the saved zoom; Ctrl+plus/minus is
         // remembered for the next start.
         if main_window
-            && let Some(zoom) = fastframe_shell::window::keep_zoom(ctx, self.settings.zoom)
+            && let Some(zoom) = crate::shell::window::keep_zoom(ctx, self.settings.zoom)
         {
             self.settings.zoom = zoom;
             self.settings_dirty = true;
@@ -11449,7 +11454,7 @@ impl App {
                 if self.window_hidden {
                     // No window exists; the outer loop creates one.
                     self.wants_show = true;
-                } else if fastframe_shell::window::raise_on_compositor() {
+                } else if crate::shell::window::raise_on_compositor() {
                     // Wayland drops a window's own request for focus; niri
                     // focuses it on request, switching to its workspace.
                 } else {
@@ -12247,6 +12252,7 @@ impl App {
     /// timers in `tick` (saving, eviction, update checks) running. MilkDrop's
     /// window outlives the main one and is polled every tick. Tray clicks,
     /// media keys and backend events wake the loop at once.
+    #[cfg(not(target_os = "ios"))]
     fn headless_wait(&self) -> fastframe_shell::Headless {
         use fastframe_shell::{HEADLESS_TICK, Headless};
         if self.settings.milkdrop_open {

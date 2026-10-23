@@ -91,7 +91,7 @@ pub struct WinampState {
     /// Where the window is, or was last: from the session, then followed
     /// while it is open. Only the position is given to the next window,
     /// which takes its size from the skin.
-    pub geometry: fastframe_shell::window::Geometry,
+    pub geometry: crate::shell::window::Geometry,
     /// The sound on its way out, for the visualiser.
     pub tap: Arc<AudioTap>,
     pub analyser: Analyser,
@@ -126,7 +126,7 @@ impl WinampState {
             marquee_text: String::new(),
             marquee_offset: 0,
             marquee_moved: None,
-            geometry: fastframe_shell::window::Geometry {
+            geometry: crate::shell::window::Geometry {
                 position: restore_pos,
                 ..Default::default()
             },

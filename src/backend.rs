@@ -1114,7 +1114,7 @@ pub enum LocalPlayback {
 /// windows: the window is destroyed when it closes to the tray and created
 /// again on demand. They therefore hold this handle, which repaints
 /// whichever window exists, instead of an `egui::Context`.
-pub use fastframe_shell::Waker;
+pub use crate::shell::Waker;
 
 /// The interface's handle to the runtime.
 pub struct Backend {

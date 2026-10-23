@@ -1,0 +1,22 @@
+# Demo screenshots for the iOS port's interface, one per line:
+# name|demo arguments. The shots job adds --demo-shot and --demo-shot-delay.
+#
+# Phone size is 390 by 844 points, an iPhone 14 or 15. `ios` previews the
+# iPhone build on the desktop demo: what iOS lacks is hidden, and the safe
+# area of a phone with a Dynamic Island (59 points on top, 34 below) is kept
+# clear the way the real insets keep it.
+home|--demo-size 390x844 --demo-page home --demo-show ios
+playlist|--demo-size 390x844 --demo-page playlist:pl1 --demo-show ios
+equalizer|--demo-size 390x844 --demo-page equalizer --demo-show ios
+settings|--demo-size 390x844 --demo-page settings --demo-show ios
+signed-out|--demo-size 390x844 --demo-show ios,signed-out
+queue|--demo-size 390x844 --demo-page home --demo-show ios,queue
+devices|--demo-size 390x844 --demo-page home --demo-show ios,devices
+dialog|--demo-size 390x844 --demo-page home --demo-show ios,create
+home-dark|--demo-size 390x844 --demo-page home --demo-show ios,dark
+# The compact layout on a desktop window that narrow (no iOS preview).
+compact-playlist|--demo-size 390x844 --demo-page playlist:pl1
+# Desktop size: the desktop look must not change.
+desktop-home|--demo-size 1280x800 --demo-page home
+desktop-settings|--demo-size 1280x800 --demo-page settings
+desktop-playlist|--demo-size 1280x800 --demo-page playlist:pl1

@@ -3221,8 +3221,11 @@ pub fn chip_line<T: PartialEq + Copy>(
     let index = options.iter().position(|(value, _)| *value == current);
     let id = ui.make_persistent_id("chip-line-shown");
     let pass = ui.ctx().cumulative_pass_nr();
-    let seen = ui.ctx().data(|data| data.get_temp::<(u64, Option<usize>)>(id));
-    ui.ctx().data_mut(|data| data.insert_temp(id, (pass, index)));
+    let seen = ui
+        .ctx()
+        .data(|data| data.get_temp::<(u64, Option<usize>)>(id));
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(id, (pass, index)));
     // Not drawn the pass before: the row has just come into view.
     let fresh = seen.is_none_or(|(at, _)| at + 1 < pass);
     let moved = seen.is_some_and(|(_, shown)| shown != index);

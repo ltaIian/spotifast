@@ -3233,15 +3233,39 @@ mod tests {
         let track = bar.y + 18.0 + 22.0;
         let column = band.x + 22.0;
         let on_bar = pos2(bar.x + 200.0, track);
-        swipe(&mut boost, &mut gain, on_bar, on_bar + egui::vec2(0.0, 120.0));
+        swipe(
+            &mut boost,
+            &mut gain,
+            on_bar,
+            on_bar + egui::vec2(0.0, 120.0),
+        );
         let on_band = pos2(column, band.y + 100.0);
-        swipe(&mut boost, &mut gain, on_band, on_band + egui::vec2(0.0, 100.0));
-        assert_eq!((boost, gain), (0.0, 0.0), "a swipe on a track moves nothing");
+        swipe(
+            &mut boost,
+            &mut gain,
+            on_band,
+            on_band + egui::vec2(0.0, 100.0),
+        );
+        assert_eq!(
+            (boost, gain),
+            (0.0, 0.0),
+            "a swipe on a track moves nothing"
+        );
         let handle = pos2(bar.x + 7.0, track);
-        swipe(&mut boost, &mut gain, handle, handle + egui::vec2(140.0, 0.0));
+        swipe(
+            &mut boost,
+            &mut gain,
+            handle,
+            handle + egui::vec2(140.0, 0.0),
+        );
         assert!(boost > 0.0, "the bar moves by its handle");
         let handle = pos2(column, band.y + 59.0);
-        swipe(&mut boost, &mut gain, handle, handle - egui::vec2(0.0, 40.0));
+        swipe(
+            &mut boost,
+            &mut gain,
+            handle,
+            handle - egui::vec2(0.0, 40.0),
+        );
         assert!(gain > 0.0, "the band moves by its handle");
     }
 

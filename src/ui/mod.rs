@@ -289,7 +289,10 @@ fn close_panels(app: &mut App) {
         (app.show_queue_panel, Action::ToggleQueuePanel),
         (app.show_lyrics_panel, Action::ToggleLyricsPanel),
         (app.show_friends_panel, Action::ToggleFriendsPanel),
-        (app.lyrics_fullscreen.is_some(), Action::SetLyricsFullscreen(false)),
+        (
+            app.lyrics_fullscreen.is_some(),
+            Action::SetLyricsFullscreen(false),
+        ),
     ];
     for (shown, close) in open {
         // Its own close button may have asked already this frame.

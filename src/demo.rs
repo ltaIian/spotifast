@@ -7960,7 +7960,10 @@ mod tests {
         draw(&mut app, vec![egui::Event::PointerMoved(bar), button(true)]);
         draw(&mut app, vec![button(false)]);
         draw(&mut app, vec![]);
-        assert!(!app.show_lyrics_panel, "the lyrics stay over the playing song");
+        assert!(
+            !app.show_lyrics_panel,
+            "the lyrics stay over the playing song"
+        );
         assert!(crate::ui::now_playing_open(&ctx));
         app.backend.shutdown();
         let _ = std::fs::remove_dir_all(root);

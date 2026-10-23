@@ -948,7 +948,11 @@ fn soft_button_inner(
     let icon_width = if icon.is_some() { icon_size + 6.0 } else { 0.0 };
     let trailing_cross = dismissible && icon.is_some() && touch(ui.ctx());
     let cross_size = 13.0;
-    let cross_width = if trailing_cross { cross_size + 8.0 } else { 0.0 };
+    let cross_width = if trailing_cross {
+        cross_size + 8.0
+    } else {
+        0.0
+    };
     let padding = Vec2::new(12.0, 7.0);
     let content = galley.size().x + icon_width + cross_width;
     let size = Vec2::new(content, galley.size().y) + padding * 2.0;
@@ -1527,7 +1531,10 @@ mod tests {
             output.textures_delta.clear();
         }
         assert_eq!(seen, Some((1.5, false)));
-        assert_eq!(ctx.global_style().spacing.interact_size, Vec2::new(40.0, 28.0));
+        assert_eq!(
+            ctx.global_style().spacing.interact_size,
+            Vec2::new(40.0, 28.0)
+        );
     }
 
     /// A previewed iPhone keeps a phone's safe area clear in a window that

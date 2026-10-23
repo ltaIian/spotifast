@@ -691,6 +691,12 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
         .show(|ui| {
             ui.set_width(200.0);
             ui.add_space(4.0);
+            // The name and the plan are words, not controls: on a touch
+            // screen they keep a pointer's row height.
+            let interact = ui.spacing().interact_size;
+            if compact {
+                ui.spacing_mut().interact_size.y = 28.0;
+            }
             ui.horizontal(|ui| {
                 ui.add_space(10.0);
                 theme::text(ui, &name, theme::semibold(14.0), palette.text);
@@ -706,6 +712,7 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
                     );
                 });
             }
+            ui.spacing_mut().interact_size = interact;
             super::widgets::menu_separator(ui, &palette);
             if super::widgets::menu_item(
                 ui,

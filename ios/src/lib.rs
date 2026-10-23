@@ -25,3 +25,10 @@ pub extern "C" fn spotifast_will_background() {
 pub extern "C" fn spotifast_will_terminate() {
     spotifast::ios::will_terminate();
 }
+
+/// The person closed the sign-in sheet: the sign-in it showed is given up.
+/// Call it on the main thread.
+#[unsafe(no_mangle)]
+pub extern "C" fn spotifast_auth_sheet_closed() {
+    spotifast::ios::auth_sheet::closed();
+}

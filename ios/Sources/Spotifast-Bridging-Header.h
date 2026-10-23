@@ -1,5 +1,5 @@
 // The C functions of the spotifast-ios static library (ios/src/lib.rs),
-// for main.swift.
+// for the Swift code.
 
 #ifndef SPOTIFAST_BRIDGING_HEADER_H
 #define SPOTIFAST_BRIDGING_HEADER_H
@@ -15,5 +15,9 @@ void spotifast_will_background(void);
 /// Saves what quitting would save: call it when the app is about to
 /// terminate.
 void spotifast_will_terminate(void);
+
+/// The person closed the sign-in sheet: the sign-in it showed is given up.
+/// Call it on the main thread.
+void spotifast_auth_sheet_closed(void);
 
 #endif

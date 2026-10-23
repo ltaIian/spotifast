@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		5F1A00000000000000000020 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F1A00000000000000000010 /* main.swift */; };
+		5F1A00000000000000000021 /* AuthSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F1A00000000000000000015 /* AuthSheet.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -16,6 +17,7 @@
 		5F1A00000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		5F1A00000000000000000013 /* Spotifast.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Spotifast.entitlements; sourceTree = "<group>"; };
 		5F1A00000000000000000014 /* Spotifast.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Spotifast.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5F1A00000000000000000015 /* AuthSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthSheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -44,6 +46,7 @@
 			children = (
 				5F1A00000000000000000010 /* main.swift */,
 				5F1A00000000000000000011 /* Spotifast-Bridging-Header.h */,
+				5F1A00000000000000000015 /* AuthSheet.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -125,6 +128,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				5F1A00000000000000000020 /* main.swift in Sources */,
+				5F1A00000000000000000021 /* AuthSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -7,6 +7,7 @@
 //! `run` does what the desktop's entry (`src/entrypoint.rs`) and
 //! fastframe-shell do, for one window that lasts as long as the app.
 
+pub mod auth_sheet;
 mod selftest;
 
 use std::cell::RefCell;
@@ -27,6 +28,8 @@ thread_local! {
     /// The app, for the hooks Swift calls on the main thread while UIKit
     /// runs the window: `None` until the window exists.
     static APP: RefCell<Option<Rc<RefCell<App>>>> = const { RefCell::new(None) };
+    /// The app's waker, for hooks that leave the app work to do.
+    static WAKER: RefCell<Option<Waker>> = const { RefCell::new(None) };
 }
 
 /// Starts Spotifast: the log, the settings and the app, then UIKit's main
@@ -72,6 +75,7 @@ pub fn run() -> ! {
     };
     let mut app = App::new(&waker, dirs, settings, options);
     app.load_custom_themes(&waker);
+    WAKER.with(|slot| *slot.borrow_mut() = Some(waker.clone()));
     // The window is the screen: the app never asks it to grow.
     crate::window::set_fixed_size(true);
     let app = Rc::new(RefCell::new(app));
@@ -108,9 +112,14 @@ pub fn run() -> ! {
 }
 
 /// The app has gone to the background, where iOS may suspend it at any
-/// moment and end it without warning: save what quitting would.
+/// moment and end it without warning: save what quitting would. A sign-in
+/// waiting on its sheet is given up: a suspended app cannot answer the
+/// redirect, and its listener would hold the port.
 pub fn will_background() {
-    with_app("background", save);
+    with_app("background", |app| {
+        auth_sheet::give_up(app);
+        save(app);
+    });
 }
 
 /// The app is about to end: save what quitting would. The process ends right
@@ -124,6 +133,15 @@ pub fn will_terminate() {
 fn save(app: &mut App) {
     app.save_state();
     app.flush_files();
+}
+
+/// Asks the window for a pass, to apply what a hook left for it.
+fn wake() {
+    WAKER.with(|slot| {
+        if let Some(waker) = slot.borrow().as_ref() {
+            waker.wake();
+        }
+    });
 }
 
 /// Runs `act` on the app, if its window exists and is not drawing.

@@ -691,6 +691,26 @@ fn no_file_dialog() -> Picked {
     Box::pin(std::future::ready(None))
 }
 
+/// Opens a Spotify sign-in page: in the browser, or on iOS in a sheet over
+/// the app, which has to stay in the foreground for the redirect to reach
+/// the listener (`src/ios/auth_sheet.rs`).
+fn show_sign_in_page(url: String) {
+    #[cfg(target_os = "ios")]
+    crate::ios::auth_sheet::open(&url);
+    #[cfg(not(target_os = "ios"))]
+    tokio::task::spawn_blocking(move || {
+        if let Err(error) = crate::opener::open(&url) {
+            log::warn!("unable to open a browser: {error}");
+        }
+    });
+}
+
+/// The browser part of a sign-in is over: on iOS, its sheet goes.
+fn browser_flow_over() {
+    #[cfg(target_os = "ios")]
+    crate::ios::auth_sheet::finished();
+}
+
 pub enum Command {
     OpenThemesFolder,
     /// Read or change the login registration, off the UI thread: it reads
@@ -734,6 +754,10 @@ pub enum Command {
     SignOut,
     /// Authorize local playback on this computer (a separate browser grant).
     AuthorizePlayback,
+    /// iOS: the person closed the sheet showing the playback authorization.
+    /// The flow ends as a cancelled one, which the interface hears.
+    #[cfg(target_os = "ios")]
+    CancelPlaybackAuthorization,
     /// Reload the engine config (audio settings changed).
     RestartEngine(EngineConfig),
     /// Rebuild the HTTP client. Restart local playback only when its HTTP
@@ -2256,6 +2280,7 @@ impl Worker {
                 Command::Shutdown => break,
                 Command::SignIn { request, config } => self.change_proxy(request, config, true),
                 Command::CancelSignIn => {
+                    browser_flow_over();
                     self.authorization_attempt += 1;
                     if let Some(cancel) = self.cancel_signin.take() {
                         self.credentials.invalidate(
@@ -2287,6 +2312,14 @@ impl Worker {
                     }
                 }
                 Command::AuthorizePlayback => self.authorize_playback(),
+                #[cfg(target_os = "ios")]
+                Command::CancelPlaybackAuthorization => {
+                    if self.authorizing_source.is_none()
+                        && let Some(cancel) = self.cancel_signin.as_ref()
+                    {
+                        let _ = cancel.send(true);
+                    }
+                }
                 Command::RestartEngine(mut config) => {
                     // Audio settings must not revert a proxy change whose UI
                     // acknowledgement was still in flight when this was clicked.
@@ -2419,6 +2452,9 @@ impl Worker {
                     lease,
                     attempt,
                 } => {
+                    if self.authorization_attempt == attempt {
+                        browser_flow_over();
+                    }
                     if lease.current()
                         && self.authorizing_source == Some(source)
                         && self.authorization_attempt == attempt
@@ -2459,6 +2495,9 @@ impl Worker {
                     lease,
                     attempt,
                 } => {
+                    if self.authorization_attempt == attempt {
+                        browser_flow_over();
+                    }
                     if lease.current() {
                         self.on_playback_authorized(access_token);
                     } else {
@@ -2494,6 +2533,7 @@ impl Worker {
                     if self.authorizing_source == Some(source)
                         && self.authorization_attempt == attempt
                     {
+                        browser_flow_over();
                         self.cancel_signin = None;
                         self.authorizing_source = None;
                         if matches!(self.api.state(source), SessionState::Authorizing) {
@@ -2505,6 +2545,9 @@ impl Worker {
                     }
                 }
                 Command::PlaybackAuthEnded { attempt } => {
+                    if self.authorization_attempt == attempt {
+                        browser_flow_over();
+                    }
                     self.finish_playback_authorization(attempt)
                 }
                 Command::Reconnect => self.reconnect_engine(),
@@ -3170,12 +3213,7 @@ impl Worker {
                 url: flow.url.clone(),
             }));
         }
-        let browser_url = flow.url.clone();
-        tokio::task::spawn_blocking(move || {
-            if let Err(error) = crate::opener::open(&browser_url) {
-                log::warn!("unable to open a browser: {error}");
-            }
-        });
+        show_sign_in_page(flow.url.clone());
         let events = self.events.clone();
         let waker = self.waker.clone();
         let commands = self.commands.clone();
@@ -3595,12 +3633,7 @@ impl Worker {
         let (cancel_tx, cancel_rx) = watch::channel(false);
         self.cancel_signin = Some(cancel_tx);
         self.emit(Event::Playback(LocalPlayback::Authorizing));
-        let browser_url = flow.url.clone();
-        tokio::task::spawn_blocking(move || {
-            if let Err(error) = crate::opener::open(&browser_url) {
-                log::warn!("unable to open a browser: {error}");
-            }
-        });
+        show_sign_in_page(flow.url.clone());
 
         let events = self.events.clone();
         let waker = self.waker.clone();

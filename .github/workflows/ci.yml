@@ -168,7 +168,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
+          $version = ((cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages | Where-Object name -eq 'spotifast').version
           $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
           if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
           $arch = if ($env:RUNNER_ARCH -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
@@ -191,7 +191,7 @@ jobs:
           $env:PATH = "$env:RUNNER_TEMP\wix;$env:PATH"
           gem install native-packages --version 0.10.0 --no-document
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
+          $version = ((cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages | Where-Object name -eq 'spotifast').version
           $target, $id = if ($env:RUNNER_ARCH -eq 'ARM64') { 'aarch64-pc-windows-msvc', 'windows-arm64' } else { 'x86_64-pc-windows-msvc', 'windows-amd64' }
           $payload = "dist\msi-input-$target"
           New-Item -ItemType Directory -Force $payload | Out-Null
@@ -216,7 +216,7 @@ jobs:
         shell: bash
         run: |
           mbx build --locked
-          version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "spotifast"))')
           app="$RUNNER_TEMP/spotifast-bundle-check/Spotifast.app"
           bash packaging/macos/bundle.sh target/debug/spotifast "$app" "$version"
           executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")

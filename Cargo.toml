@@ -18,6 +18,11 @@ path = "src/lib.rs"
 name = "spotifast"
 path = "src/spotifast.rs"
 
+[workspace]
+# The iOS app's static library (ios/). Commands run here still build only
+# Spotifast, the workspace's root package, unless asked for another.
+members = ["ios"]
+
 [dependencies]
 anyhow = "1"
 thiserror = "2"

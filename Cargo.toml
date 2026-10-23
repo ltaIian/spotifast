@@ -258,6 +258,10 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 # The Keychain (src/credentials.rs). iOS has only the protected store; the
 # `keychain` feature macOS uses is the legacy keychain.
 apple-native-keyring-store = { version = "1.0.2", features = ["protected"] }
+# The time zone database, built in: iOS keeps none where jiff reads one,
+# and without it local times would show in UTC. The zone's name comes in
+# the TZ variable.
+jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
 
 [build-dependencies]
 # Drops unfinished PO entries and compiles catalog text and gettext plural

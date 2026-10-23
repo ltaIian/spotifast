@@ -1,13 +1,15 @@
-# The unsigned iOS app, Spotifast-<version>-ios-unsigned.ipa, for
-# sideloading with AltStore, SideStore or Sideloadly, which sign it with the
-# user's own Apple ID. scripts/build-ipa.sh builds it on a macOS runner and
-# the run keeps it as an artifact. It runs for every push to the iOS port's
-# integration branch, and by hand from the Actions tab.
+# The release build of the unsigned iOS app,
+# Spotifast-<version>-ios-unsigned.ipa, for sideloading with AltStore,
+# SideStore or Sideloadly, which sign it with the user's own Apple ID.
+# scripts/build-ipa.sh builds it on a macOS runner, without a compiler
+# cache, and the run keeps it as an artifact. It runs for a v* tag and by
+# hand from the Actions tab; the iOS port's check workflow (ios-probe.yml)
+# builds an .ipa for every push.
 name: iOS app (.ipa)
 
 on:
   push:
-    branches: [ios-port]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -34,6 +36,6 @@ jobs:
         run: bash scripts/build-ipa.sh
       - uses: actions/upload-artifact@v7
         with:
-          name: Spotifast-ios-unsigned-ipa-${{ github.sha }}
+          name: Spotifast-ios-unsigned-ipa-release-${{ github.sha }}
           path: dist/*.ipa
           if-no-files-found: error

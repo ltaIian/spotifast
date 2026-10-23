@@ -138,7 +138,7 @@ impl SignIn {
         let action = match mode {
             Mode::SignInWeb => Action::SignIn,
             Mode::SignInPlayback => Action::EnablePlayback,
-            Mode::Diagnostics => return None,
+            Mode::Diagnostics | Mode::Background => return None,
         };
         Some(Self {
             action: Some(action),

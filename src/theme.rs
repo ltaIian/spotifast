@@ -232,7 +232,7 @@ pub const CUSTOM_TOP_BAR_HEIGHT: f32 = 48.0;
 /// Keep the custom Windows header close to its 36-point caption controls.
 /// Linux's custom title bar keeps the ordinary height.
 pub fn top_bar_height() -> f32 {
-    if cfg!(windows) && fastframe_titlebar::enabled() {
+    if cfg!(windows) && crate::titlebar::enabled() {
         CUSTOM_TOP_BAR_HEIGHT
     } else {
         TOP_BAR_HEIGHT
@@ -289,7 +289,7 @@ pub fn install(ctx: &egui::Context) {
     install_fonts(ctx);
     egui_extras::install_image_loaders(ctx);
     fastframe_icons::install::<Icon>(ctx);
-    fastframe_titlebar::install(ctx);
+    crate::titlebar::install(ctx);
     // Colour emoji over every text egui draws (see `crate::emoji`).
     ctx.add_plugin(fastframe_emoji::EmojiPlugin::default());
 }

@@ -50,11 +50,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         update::show(app, ctx);
         toasts(app, ctx, 20.0);
         caption_buttons(ui, &app.palette, app.locale);
-        fastframe_titlebar::resize(ui);
+        crate::titlebar::resize(ui);
         return;
     }
-    if titlebar_spans_window(cfg!(target_os = "macos"), fastframe_titlebar::enabled()) {
-        fastframe_titlebar::drag(
+    if titlebar_spans_window(cfg!(target_os = "macos"), crate::titlebar::enabled()) {
+        crate::titlebar::drag(
             ui,
             Rect::from_min_size(
                 ui.max_rect().min,
@@ -90,7 +90,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     widgets::drag_ghost(ctx, &app.palette, app.locale);
     toasts(app, ctx, theme::PLAYER_BAR_HEIGHT + 16.0);
     caption_buttons(ui, &app.palette, app.locale);
-    fastframe_titlebar::resize(ui);
+    crate::titlebar::resize(ui);
 }
 
 /// The main window's narrowest width with these panels open: their least
@@ -405,7 +405,7 @@ pub(super) struct WindowControlsReservation {
 /// queue's or the lyrics' when either panel is open, otherwise the top bar,
 /// beside its controls or above them when the page is too narrow.
 fn controls_reservation(
-    footprint: fastframe_titlebar::Footprint,
+    footprint: crate::titlebar::Footprint,
     queue: bool,
     lyrics: bool,
     topbar_width: f32,
@@ -436,7 +436,7 @@ pub(super) fn linux_left_controls_inset(ctx: &egui::Context) -> f32 {
     if !cfg!(target_os = "linux") {
         return 0.0;
     }
-    let footprint = fastframe_titlebar::footprint(ctx, theme::CUSTOM_TOP_BAR_HEIGHT);
+    let footprint = crate::titlebar::footprint(ctx, theme::CUSTOM_TOP_BAR_HEIGHT);
     if footprint.left > 0.0 {
         footprint.height
     } else {
@@ -451,7 +451,7 @@ pub(super) fn window_controls_reservation(
     topbar_width: f32,
 ) -> WindowControlsReservation {
     controls_reservation(
-        fastframe_titlebar::footprint(ctx, theme::CUSTOM_TOP_BAR_HEIGHT),
+        crate::titlebar::footprint(ctx, theme::CUSTOM_TOP_BAR_HEIGHT),
         queue,
         lyrics,
         topbar_width,
@@ -463,7 +463,7 @@ pub(super) fn window_controls_reservation(
 /// buttons in the text colour on the hover surface.
 fn caption_buttons(ui: &mut egui::Ui, palette: &theme::Palette, locale: crate::i18n::Locale) {
     use crate::i18n::gettext;
-    let style = fastframe_titlebar::Style {
+    let style = crate::titlebar::Style {
         icon: if cfg!(target_os = "linux") {
             palette.text
         } else {
@@ -477,13 +477,13 @@ fn caption_buttons(ui: &mut egui::Ui, palette: &theme::Palette, locale: crate::i
     let maximize = gettext(locale, "Maximize");
     let restore = gettext(locale, "Restore");
     let close = gettext(locale, "Close");
-    let labels = fastframe_titlebar::Labels {
+    let labels = crate::titlebar::Labels {
         minimize: &minimize,
         maximize: &maximize,
         restore: &restore,
         close: &close,
     };
-    fastframe_titlebar::controls(ui, &style, &labels);
+    crate::titlebar::controls(ui, &style, &labels);
 }
 
 pub fn blend(base: Color32, tint: Color32, amount: f32) -> Color32 {
@@ -554,7 +554,7 @@ fn toasts(app: &mut App, ctx: &egui::Context, bottom_offset: f32) {
 #[cfg(test)]
 mod window_chrome_tests {
     use super::*;
-    use fastframe_titlebar::Footprint;
+    use crate::titlebar::Footprint;
 
     /// Windows' three buttons in its 48-point header.
     const BUTTONS: Footprint = Footprint {

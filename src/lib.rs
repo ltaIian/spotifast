@@ -54,6 +54,7 @@ pub mod sonos;
 pub mod system_fonts;
 pub mod theme;
 pub mod thumbbar;
+pub mod titlebar;
 pub mod ui;
 pub mod updates;
 pub mod util;

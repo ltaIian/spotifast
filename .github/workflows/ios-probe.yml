@@ -1,0 +1,62 @@
+# Feasibility probe for the iOS port (ios-port branch): type-checks the crate
+# for aarch64-apple-ios on a macOS runner and keeps the full compiler output
+# as an artifact. It does not build an app or sign anything.
+name: iOS compile probe
+
+on:
+  push:
+    branches: [ios-port]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  probe:
+    name: cargo check (${{ matrix.target }})
+    runs-on: macos-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-ios, aarch64-apple-ios-sim, aarch64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Toolchain
+        run: |
+          rustc -vV
+          cargo -vV
+          xcodebuild -version
+          rustc --print cfg --target ${{ matrix.target }} | sort
+      - name: Dependency tree
+        run: |
+          mkdir -p probe
+          cargo tree --locked --target ${{ matrix.target }} --no-default-features -e normal,build --prefix depth > probe/tree-${{ matrix.target }}.txt || true
+          cargo tree --locked --target ${{ matrix.target }} --no-default-features -e normal --duplicates > probe/duplicates-${{ matrix.target }}.txt || true
+      - name: cargo check (no default features, keep going)
+        id: check
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cargo check --locked --keep-going --target ${{ matrix.target }} --no-default-features --lib --bins --message-format=short 2>&1 | tee probe/check-${{ matrix.target }}.log
+      - name: cargo check (json diagnostics)
+        if: steps.check.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          cargo check --locked --keep-going --target ${{ matrix.target }} --no-default-features --lib --bins --message-format=json 2>/dev/null > probe/check-${{ matrix.target }}.json || true
+          # One line per failing crate: which package could not be compiled.
+          grep -o '"package_id":"[^"]*"' probe/check-${{ matrix.target }}.json | sort | uniq -c | sort -rn > probe/failing-crates-${{ matrix.target }}.txt || true
+          grep -o 'could not compile `[^`]*`' probe/check-${{ matrix.target }}.log | sort -u > probe/could-not-compile-${{ matrix.target }}.txt || true
+          echo "## Could not compile (${{ matrix.target }})" >> "$GITHUB_STEP_SUMMARY"
+          cat probe/could-not-compile-${{ matrix.target }}.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-${{ matrix.target }}
+          path: probe/
+          if-no-files-found: warn

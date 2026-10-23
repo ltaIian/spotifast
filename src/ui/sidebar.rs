@@ -389,16 +389,21 @@ fn sort_menu(app: &mut App, ui: &mut egui::Ui, shelf: Filter, selected: LibraryS
         .find(|(sort, _)| *sort == selected)
         .expect("sort label")
         .1;
-    let response = ui.add(
-        egui::Button::image_and_text(
-            Icon::ChevronDown.image(app.palette.text, 15.0),
-            egui::RichText::new(label.as_ref()).font(theme::medium(13.0)),
+    // On a touch screen it is a chip like the filters above it.
+    let response = if theme::touch(ui.ctx()) {
+        theme::soft_button(ui, &app.palette, Some(Icon::ChevronDown), label, false)
+    } else {
+        ui.add(
+            egui::Button::image_and_text(
+                Icon::ChevronDown.image(app.palette.text, 15.0),
+                egui::RichText::new(label.as_ref()).font(theme::medium(13.0)),
+            )
+            .wrap()
+            .fill(app.palette.surface)
+            .corner_radius(12)
+            .min_size(vec2(0.0, 28.0)),
         )
-        .wrap()
-        .fill(app.palette.surface)
-        .corner_radius(12)
-        .min_size(vec2(0.0, 28.0)),
-    );
+    };
     egui::Popup::menu(&response)
         .frame(super::widgets::menu_frame(&app.palette))
         .show(|ui| {

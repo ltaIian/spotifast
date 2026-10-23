@@ -1,19 +1,49 @@
 # Checks for the iOS port branches (ios-port and ios-port-*). The port is
 # developed on a machine without Rust or Xcode, so this workflow is the
-# build: a desktop regression check on macOS, a type-check for the iOS
-# targets, the iOS static library and simulator build once ios/ exists, and
-# the unsigned .ipa once scripts/build-ipa.sh exists. Compiler output and
-# the resolved Cargo.lock are uploaded as artifacts so a branch that adds a
-# dependency can commit the lock file CI produced.
+# build for every agent working on it:
+#
+# - desktop: build, tests and clippy on macOS without default features (the
+#   tests and clippy with the demo feature, which carries the headless render
+#   tests), plus formatting and the dependency/evidence policy scripts.
+# - ios: a type-check of the library for both iOS targets; once ios/ exists,
+#   the spotifast-ios static library, the simulator app and a smoke test that
+#   launches it in an iPhone simulator and takes a screenshot; once
+#   scripts/build-ipa.sh exists, the unsigned .ipa.
+# - shots: phone-size screenshots of the desktop demo, for the interface work.
+# - full: the default and all-features configurations on macOS and Linux,
+#   on the integration branch only.
+#
+# Compiler output, the resolved Cargo.lock (a branch that adds a dependency
+# commits the lock file CI produced), screenshots and the .ipa are uploaded
+# as artifacts named after the commit.
 name: iOS port checks
 
 on:
   push:
     branches: ['ios-port', 'ios-port-*']
   workflow_dispatch:
+    inputs:
+      ios:
+        description: Run the iOS jobs
+        type: boolean
+        default: true
+      shots:
+        description: Take the phone-size demo screenshots
+        type: boolean
+        default: false
+      full:
+        description: Run the default and all-features checks (macOS and Linux)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+# A newer push to an agent branch replaces its running checks. The
+# integration branch keeps every run, since each one is a merge to verify.
+concurrency:
+  group: ios-port-checks-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/ios-port' }}
 
 env:
   CARGO_TERM_COLOR: never
@@ -21,20 +51,18 @@ env:
 
 jobs:
   desktop:
-    name: desktop build and tests (macOS, no default features)
+    name: desktop (macOS, no default features)
     runs-on: macos-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: Toolchain components
+        run: rustup component add rustfmt clippy
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: desktop
           save-if: ${{ github.ref == 'refs/heads/ios-port' }}
-      - name: Toolchain
-        run: rustup show
       - name: Build
         id: build
         continue-on-error: true
@@ -42,36 +70,43 @@ jobs:
           mkdir -p out
           set -o pipefail
           cargo build --no-default-features --message-format=short 2>&1 | tee out/desktop-build.log
-      - name: Tests
+      - name: Tests (with the demo feature)
         id: test
         if: steps.build.outcome == 'success'
         continue-on-error: true
         run: |
           set -o pipefail
-          cargo test --no-default-features --all-targets 2>&1 | tee out/desktop-test.log
-      - name: Clippy
+          cargo test --no-default-features --features demo --all-targets 2>&1 | tee out/desktop-test.log
+      - name: Clippy (with the demo feature)
         id: clippy
         if: steps.build.outcome == 'success'
         continue-on-error: true
         run: |
           set -o pipefail
-          cargo clippy --no-default-features --all-targets -- -D warnings 2>&1 | tee out/desktop-clippy.log
+          cargo clippy --no-default-features --features demo --all-targets --message-format=short -- -D warnings 2>&1 | tee out/desktop-clippy.log
       - name: Formatting
         id: fmt
         continue-on-error: true
-        run: cargo fmt --all --check 2>&1 | tee out/desktop-fmt.log
+        run: |
+          set -o pipefail
+          cargo fmt --all --check 2>&1 | tee out/desktop-fmt.log
       - name: Policy checks
+        id: policy
         continue-on-error: true
         run: |
+          set -o pipefail
           python3 .github/scripts/check-dependency-sources.py 2>&1 | tee out/policy-sources.log
           python3 .github/scripts/check-review-evidence.py 2>&1 | tee out/policy-evidence.log
       - name: Resolved lock file
+        if: always()
         run: cp Cargo.lock out/Cargo.lock
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: desktop-${{ github.sha }}
           path: out/
       - name: Summary
+        if: always()
         run: |
           {
             echo "## Desktop (macOS, --no-default-features)"
@@ -79,18 +114,26 @@ jobs:
             echo "- tests: ${{ steps.test.outcome }}"
             echo "- clippy: ${{ steps.clippy.outcome }}"
             echo "- fmt: ${{ steps.fmt.outcome }}"
+            echo "- policy: ${{ steps.policy.outcome }}"
             echo '```'
-            grep -E '^(error|test result|warning: unused)' out/desktop-build.log out/desktop-test.log out/desktop-clippy.log 2>/dev/null | head -80
+            grep -hE '^(error|test result|failures:|    [a-z_:]+$)|panicked at|error\[' out/desktop-build.log out/desktop-test.log out/desktop-clippy.log 2>/dev/null | head -100
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Fail the job if anything failed
-        if: steps.build.outcome != 'success' || steps.test.outcome != 'success' || steps.clippy.outcome != 'success' || steps.fmt.outcome != 'success'
+        if: steps.build.outcome != 'success' || steps.test.outcome != 'success' || steps.clippy.outcome != 'success' || steps.fmt.outcome != 'success' || steps.policy.outcome != 'success'
         run: exit 1
 
   ios:
     name: iOS (${{ matrix.target }})
+    # The iOS build only means something on the branches that carry the iOS
+    # work; the other agent branches inherit the integration branch's state.
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.ios ||
+      github.event_name == 'push' && (github.ref == 'refs/heads/ios-port' ||
+      github.ref == 'refs/heads/ios-port-ios-platform' ||
+      github.ref == 'refs/heads/ios-port-packaging')
     runs-on: macos-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -108,47 +151,122 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/ios-port' }}
       - name: Toolchain
         run: |
-          rustup show
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-version
-      - name: cargo check (root crate, keep going)
+          mkdir -p out
+          { rustup show; xcodebuild -version; xcrun --sdk iphoneos --show-sdk-version; } 2>&1 | tee out/toolchain.log
+      - name: cargo check (library, keep going)
         id: check
         continue-on-error: true
         run: |
-          mkdir -p out
           set -o pipefail
           cargo check --keep-going --target ${{ matrix.target }} --no-default-features --lib --message-format=short 2>&1 | tee out/check-${{ matrix.target }}.log
-          grep -o 'could not compile `[^`]*`' out/check-${{ matrix.target }}.log | sort -u > out/could-not-compile-${{ matrix.target }}.txt || true
+      - name: Crates that did not compile
+        if: always()
+        run: grep -o 'could not compile `[^`]*`' out/check-${{ matrix.target }}.log | sort -u | tee out/could-not-compile-${{ matrix.target }}.txt || true
+
+      # The static library, in the dev profile for a quick turnaround (the
+      # .ipa is built in release by scripts/build-ipa.sh below).
       - name: cargo build (spotifast-ios static library)
         id: staticlib
-        if: hashFiles('ios/Cargo.toml') != ''
+        if: steps.check.outcome == 'success' && hashFiles('ios/Cargo.toml') != '' && (matrix.target == 'aarch64-apple-ios-sim' || hashFiles('scripts/build-ipa.sh') == '')
         continue-on-error: true
         run: |
           set -o pipefail
-          cargo build --release --target ${{ matrix.target }} -p spotifast-ios --message-format=short 2>&1 | tee out/staticlib-${{ matrix.target }}.log
-          ls -la target/${{ matrix.target }}/release/*.a | tee -a out/staticlib-${{ matrix.target }}.log
+          cargo build --target ${{ matrix.target }} -p spotifast-ios --message-format=short 2>&1 | tee out/staticlib-${{ matrix.target }}.log
+          ls -la target/${{ matrix.target }}/debug/*.a 2>&1 | tee -a out/staticlib-${{ matrix.target }}.log
+      - name: Native libraries and frameworks the static library needs
+        if: steps.staticlib.outcome == 'success'
+        continue-on-error: true
+        run: |
+          cargo rustc --target ${{ matrix.target }} -p spotifast-ios --crate-type staticlib -- --print native-static-libs 2>&1 | grep -A2 'native-static-libs' | tee out/native-static-libs-${{ matrix.target }}.txt
+
       - name: xcodebuild (simulator)
         id: xcode
         if: matrix.target == 'aarch64-apple-ios-sim' && steps.staticlib.outcome == 'success' && hashFiles('ios/Spotifast.xcodeproj/project.pbxproj') != ''
         continue-on-error: true
         run: |
           set -o pipefail
-          xcodebuild -project ios/Spotifast.xcodeproj -scheme Spotifast -configuration Release \
-            -destination 'generic/platform=iOS Simulator' -derivedDataPath build/sim \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO 2>&1 | tee out/xcodebuild-sim.log | grep -E 'error|warning: (ld|linker)|BUILD|Undefined|duplicate' || true
-          test ${PIPESTATUS[0]} -eq 0
-      - name: build-ipa.sh (device)
+          xcodebuild -project ios/Spotifast.xcodeproj -scheme Spotifast -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/sim \
+            SPOTIFAST_RUST_LIB_DIR="$PWD/target/aarch64-apple-ios-sim/debug" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO 2>&1 | tee out/xcodebuild-sim.log \
+            | grep -E 'error:|warning: .*(ld|link)|BUILD (SUCCEEDED|FAILED)|Undefined symbols|duplicate symbol|^ld: ' || true
+          grep -q 'BUILD SUCCEEDED' out/xcodebuild-sim.log
+
+      # Launches the simulator app and records what it does: a screenshot,
+      # the console, the system log, the app's own log and any crash report.
+      # SPOTIFAST_SELFTEST=1 asks the iOS entry point for its diagnostics.
+      - name: Simulator smoke test
+        id: smoke
+        if: steps.xcode.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -u
+          app=$(find build/sim -type d -name 'Spotifast.app' -path '*iphonesimulator*' | head -1)
+          echo "app: $app"
+          bundle=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")
+          device=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          data = json.load(sys.stdin)["devices"]
+          runtimes = sorted((r for r in data if "iOS" in r), reverse=True)
+          for runtime in runtimes:
+              phones = [d for d in data[runtime] if d["name"].startswith("iPhone") and "Pro" in d["name"]] or [d for d in data[runtime] if d["name"].startswith("iPhone")]
+              if phones:
+                  print(phones[0]["udid"]); break
+          ')
+          echo "device: $device bundle: $bundle"
+          xcrun simctl list devices | grep "$device" | tee out/sim-device.txt
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b > /dev/null
+          xcrun simctl install "$device" "$app"
+          SIMCTL_CHILD_SPOTIFAST_SELFTEST=1 SIMCTL_CHILD_RUST_BACKTRACE=1 \
+            xcrun simctl launch --console-pty --terminate-running-process "$device" "$bundle" > out/sim-console.log 2>&1 &
+          sleep 12
+          xcrun simctl io "$device" screenshot out/sim-12s.png || true
+          sleep 28
+          xcrun simctl io "$device" screenshot out/sim-40s.png || true
+          if xcrun simctl spawn "$device" launchctl list | grep -q "$bundle"; then
+            echo "running after 40 s" | tee out/sim-status.txt
+          else
+            echo "NOT running after 40 s" | tee out/sim-status.txt
+          fi
+          data=$(xcrun simctl get_app_container "$device" "$bundle" data 2>/dev/null || true)
+          if [ -n "$data" ]; then
+            find "$data" -maxdepth 5 \( -name '*.log' -o -name '*.json' -o -name '*.ron' \) -size -2M -print | tee out/sim-container-files.txt
+            mkdir -p out/sim-container
+            find "$data" -maxdepth 5 -name '*.log' -size -2M -exec cp {} out/sim-container/ \;
+          fi
+          xcrun simctl spawn "$device" log show --last 3m --style compact --predicate 'process == "Spotifast"' > out/sim-oslog.txt 2>&1 || true
+          cp ~/Library/Logs/DiagnosticReports/Spotifast* out/ 2>/dev/null || true
+          xcrun simctl terminate "$device" "$bundle" || true
+          grep -q '^running after' out/sim-status.txt
+
+      - name: build-ipa.sh (device, release)
         id: ipa
-        if: matrix.target == 'aarch64-apple-ios' && steps.staticlib.outcome == 'success' && hashFiles('scripts/build-ipa.sh') != ''
+        if: matrix.target == 'aarch64-apple-ios' && steps.check.outcome == 'success' && hashFiles('scripts/build-ipa.sh') != ''
         continue-on-error: true
         run: |
           set -o pipefail
-          bash scripts/build-ipa.sh 2>&1 | tee out/build-ipa.log | tail -60
-          test ${PIPESTATUS[0]} -eq 0
-          ls -la dist/
+          bash scripts/build-ipa.sh 2>&1 | tee out/build-ipa.log | tail -80
+          ls -la dist/ | tee -a out/build-ipa.log
+          ls dist/*.ipa
+      - name: Inspect the .ipa
+        if: steps.ipa.outcome == 'success'
+        continue-on-error: true
+        run: |
+          ipa=$(ls dist/*.ipa | head -1)
+          unzip -l "$ipa" | tee out/ipa-contents.txt | tail -5
+          rm -rf /tmp/ipa && mkdir -p /tmp/ipa && unzip -q "$ipa" -d /tmp/ipa
+          app=$(ls -d /tmp/ipa/Payload/*.app)
+          plutil -p "$app/Info.plist" | tee out/ipa-info-plist.txt
+          lipo -info "$app/$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Info.plist")" | tee out/ipa-binary.txt
+          otool -l "$app/$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Info.plist")" | grep -A4 LC_BUILD_VERSION | tee -a out/ipa-binary.txt
+          ls -la "$app" | tee -a out/ipa-contents.txt
       - name: Resolved lock file
+        if: always()
         run: cp Cargo.lock out/Cargo.lock
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: ios-${{ matrix.target }}-${{ github.sha }}
           path: out/
@@ -159,19 +277,111 @@ jobs:
           path: dist/*.ipa
           if-no-files-found: error
       - name: Summary
+        if: always()
         run: |
           {
             echo "## iOS ${{ matrix.target }}"
-            echo "- cargo check (root lib): ${{ steps.check.outcome }}"
-            echo "- staticlib (spotifast-ios): ${{ steps.staticlib.outcome }}"
-            echo "- xcodebuild simulator: ${{ steps.xcode.outcome }}"
+            echo "- cargo check (library): ${{ steps.check.outcome }}"
+            echo "- static library (spotifast-ios): ${{ steps.staticlib.outcome }}"
+            echo "- xcodebuild (simulator): ${{ steps.xcode.outcome }}"
+            echo "- simulator smoke test: ${{ steps.smoke.outcome }}"
             echo "- build-ipa.sh: ${{ steps.ipa.outcome }}"
-            echo "### Could not compile"
-            cat out/could-not-compile-${{ matrix.target }}.txt
+            echo "### Did not compile"
+            cat out/could-not-compile-${{ matrix.target }}.txt 2>/dev/null
             echo '```'
-            grep -E '^(error|warning: unused)|error\[' out/check-${{ matrix.target }}.log out/staticlib-${{ matrix.target }}.log 2>/dev/null | head -80
+            grep -hE '^error|error\[|^ld: |Undefined symbols' out/check-*.log out/staticlib-*.log out/xcodebuild-sim.log out/build-ipa.log 2>/dev/null | head -80
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Fail the job if anything failed
-        if: steps.check.outcome != 'success' || steps.staticlib.outcome == 'failure' || steps.xcode.outcome == 'failure' || steps.ipa.outcome == 'failure'
+        if: steps.check.outcome != 'success' || steps.staticlib.outcome == 'failure' || steps.xcode.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.ipa.outcome == 'failure'
         run: exit 1
+
+  shots:
+    name: phone-size demo screenshots (macOS)
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.shots ||
+      github.event_name == 'push' && (github.ref == 'refs/heads/ios-port' ||
+      github.ref == 'refs/heads/ios-port-mobile-ui')
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: shots
+          save-if: ${{ github.ref == 'refs/heads/ios-port' }}
+      - name: Build the demo
+        id: build
+        run: |
+          mkdir -p out/shots
+          set -o pipefail
+          cargo build --no-default-features --features demo --message-format=short 2>&1 | tee out/shots-build.log
+      # One shot per line of .github/ios-port-shots.txt: `name|arguments`,
+      # where the arguments are passed to the demo after --demo-shot.
+      - name: Screenshots
+        continue-on-error: true
+        run: |
+          list=.github/ios-port-shots.txt
+          if [ ! -f "$list" ]; then
+            printf '%s\n' \
+              'home|--demo-size 390x844 --demo-page home' \
+              'settings|--demo-size 390x844 --demo-page settings' \
+              'signed-out|--demo-size 390x844 --demo-show signed-out' \
+              'queue|--demo-size 390x844 --demo-page home --demo-show queue' \
+              'desktop-home|--demo-size 1280x800 --demo-page home' > /tmp/shots.txt
+            list=/tmp/shots.txt
+          fi
+          grep -vE '^\s*(#|$)' "$list" | while IFS='|' read -r name args; do
+            echo "== $name: $args"
+            # shellcheck disable=SC2086
+            # macOS has no timeout(1); perl's alarm bounds each run.
+            perl -e 'alarm shift; exec @ARGV' 120 target/debug/spotifast --demo-shot "out/shots/$name.png" --demo-shot-delay 4000 $args > "out/shots/$name.log" 2>&1 || echo "shot $name failed: exit $?"
+            ls -la "out/shots/$name.png" 2>/dev/null || tail -20 "out/shots/$name.log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shots-${{ github.sha }}
+          path: out/
+
+  full:
+    name: full ${{ matrix.os }} (default and all features)
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.full ||
+      github.event_name == 'push' && github.ref == 'refs/heads/ios-port'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Toolchain components
+        run: rustup component add clippy
+      - name: GUI build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libpipewire-0.3-dev libxkbcommon-dev \
+            libwayland-dev libgl1-mesa-dev cmake libclang-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: full-${{ matrix.os }}
+          save-if: ${{ github.ref == 'refs/heads/ios-port' }}
+      - name: Clippy (default features, MilkDrop included)
+        run: |
+          mkdir -p out
+          set -o pipefail
+          cargo clippy --all-targets --message-format=short -- -D warnings 2>&1 | tee out/full-default.log
+      - name: Clippy (all features)
+        run: |
+          set -o pipefail
+          cargo clippy --all-targets --all-features --message-format=short -- -D warnings 2>&1 | tee out/full-all.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: full-${{ matrix.os }}-${{ github.sha }}
+          path: out/

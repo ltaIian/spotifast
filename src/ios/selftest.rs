@@ -1,9 +1,19 @@
-//! Diagnostics for the simulator's smoke test, asked for with
-//! `SPOTIFAST_SELFTEST=1` in the app's environment. Each check logs what it
-//! found, on lines starting `selftest:`, and the app carries on: none of
-//! them changes what the app does, and none can end it.
+//! Diagnostics for the simulator's smoke test, asked for in the app's
+//! environment with `SPOTIFAST_SELFTEST`:
+//!
+//! - `1`: each check logs what it found, on lines starting `selftest:`, and
+//!   the app carries on: none of them changes what the app does, and none
+//!   can end it;
+//! - `signin-web`: the Web API sign-in starts by itself once the sign-in
+//!   screen is up, as its button starts it, so its sheet shows what Spotify
+//!   answers this client id with;
+//! - `signin-playback`: the playback authorization, the same way.
 
 use std::time::Duration;
+
+use crate::app::App;
+use crate::backend::AuthStatus;
+use crate::model::Action;
 
 /// A request that needs no sign-in, over TLS to Spotify.
 const APRESOLVE: &str = "https://apresolve.spotify.com/?type=accesspoint";
@@ -12,10 +22,53 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 /// How many changes of the window's safe area are logged.
 const INSET_REPORTS: u8 = 6;
 
-/// Whether this run was asked for the diagnostics.
-pub fn requested() -> bool {
-    let asked = std::env::var_os("SPOTIFAST_SELFTEST");
-    asked.is_some_and(|value| value == "1")
+/// What `SPOTIFAST_SELFTEST` asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// `1`: the diagnostics below.
+    Diagnostics,
+    /// `signin-web`: the Web API sign-in, started at launch.
+    SignInWeb,
+    /// `signin-playback`: the playback authorization, started at launch.
+    SignInPlayback,
+}
+
+/// What this run was asked for, if anything.
+pub fn requested() -> Option<Mode> {
+    let asked = std::env::var("SPOTIFAST_SELFTEST").ok()?;
+    match asked.as_str() {
+        "1" => Some(Mode::Diagnostics),
+        "signin-web" => Some(Mode::SignInWeb),
+        "signin-playback" => Some(Mode::SignInPlayback),
+        _ => None,
+    }
+}
+
+/// Starts a sign-in once the sign-in screen is up, with the action its
+/// button sends: Sign in with Spotify for the Web API, Set up playback for
+/// the playback authorization.
+pub struct SignIn {
+    action: Option<Action>,
+}
+
+impl SignIn {
+    pub fn for_mode(mode: Mode) -> Option<Self> {
+        let action = match mode {
+            Mode::SignInWeb => Action::SignIn,
+            Mode::SignInPlayback => Action::EnablePlayback,
+            Mode::Diagnostics => return None,
+        };
+        Some(Self {
+            action: Some(action),
+        })
+    }
+
+    pub fn poll(&mut self, app: &mut App) {
+        if matches!(app.auth, AuthStatus::SignedOut) && let Some(action) = self.action.take() {
+            log::info!("selftest: starting the sign-in with {action:?}, as its button does");
+            app.actions.push(action);
+        }
+    }
 }
 
 /// Runs the checks on a thread of their own while the window opens.

@@ -59,7 +59,7 @@ pub fn run() -> ! {
         log::warn!("unable to create the application directories: {error}");
     }
     let self_test = selftest::requested();
-    if self_test {
+    if self_test == Some(selftest::Mode::Diagnostics) {
         selftest::start();
     }
     let mut settings = Settings::load(&dirs.settings_file());
@@ -88,9 +88,11 @@ pub fn run() -> ! {
         waker.attach(&cc.egui_ctx);
         app.borrow_mut().attach(&cc.egui_ctx);
         APP.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
+        let diagnostics = self_test == Some(selftest::Mode::Diagnostics);
         Ok(Box::new(Window {
             app,
-            insets: self_test.then(selftest::Insets::default),
+            insets: diagnostics.then(selftest::Insets::default),
+            sign_in: self_test.and_then(selftest::SignIn::for_mode),
         }))
     });
     let options = eframe::NativeOptions {
@@ -239,6 +241,8 @@ struct Window {
     app: Rc<RefCell<App>>,
     /// What the self-test reports of the window, when it runs.
     insets: Option<selftest::Insets>,
+    /// The sign-in the self-test starts by itself, when it asks for one.
+    sign_in: Option<selftest::SignIn>,
 }
 
 impl eframe::App for Window {
@@ -252,7 +256,11 @@ impl eframe::App for Window {
         if let Some(insets) = &mut self.insets {
             insets.report(ctx);
         }
-        self.app.borrow_mut().background_frame(ctx);
+        let mut app = self.app.borrow_mut();
+        if let Some(sign_in) = &mut self.sign_in {
+            sign_in.poll(&mut app);
+        }
+        app.background_frame(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

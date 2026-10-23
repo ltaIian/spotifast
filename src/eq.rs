@@ -1312,7 +1312,10 @@ mod tests {
     }
 
     /// One thread writes two whole snapshots in turn while another reads:
-    /// every read is one of the two, never part of each.
+    /// every read is one of the two, never part of each, and the reads see
+    /// both, so the race really ran. This guards the odd and even sequence;
+    /// the memory orderings rest on the standard sequence lock, which no
+    /// test on one machine can prove.
     #[test]
     fn a_read_never_sees_half_a_write() {
         use std::sync::atomic::{AtomicBool, AtomicUsize};
@@ -1342,27 +1345,40 @@ mod tests {
             let writes = Arc::clone(&writes);
             std::thread::spawn(move || {
                 while !stop.load(Ordering::Relaxed) {
-                    shared.set(second);
-                    shared.set(first);
-                    writes.fetch_add(2, Ordering::Relaxed);
-                    // A breath between writes, so reads also land between
-                    // them and not only across them.
-                    for _ in 0..64 {
-                        std::hint::spin_loop();
+                    for settings in [second, first] {
+                        shared.set(settings);
+                        writes.fetch_add(1, Ordering::Relaxed);
+                        // A breath after each write, so that reads land
+                        // between writes and find each snapshot in place.
+                        for _ in 0..64 {
+                            std::hint::spin_loop();
+                        }
                     }
                 }
             })
         };
-        let mut reads = 0;
-        while reads < 20_000 || writes.load(Ordering::Relaxed) < 20_000 {
+        // Reads go on until both sides have done plenty and both snapshots
+        // have been seen, or for ten million reads at most.
+        let (mut reads, mut seconds) = (0usize, 0usize);
+        loop {
             let seen = shared.get();
             assert!(seen == first || seen == second, "a torn read: {seen:?}");
+            seconds += usize::from(seen == second);
             if let Some(seen) = shared.try_get() {
                 assert!(seen == first || seen == second, "a torn read: {seen:?}");
             }
             reads += 1;
+            let plenty = reads >= 20_000 && writes.load(Ordering::Relaxed) >= 20_000;
+            let raced = plenty && seconds > 0 && seconds < reads;
+            if raced || reads == 10_000_000 {
+                break;
+            }
         }
         stop.store(true, Ordering::Relaxed);
         writer.join().unwrap();
+        assert!(
+            seconds > 0 && seconds < reads,
+            "{seconds} of {reads} reads saw the second snapshot"
+        );
     }
 }

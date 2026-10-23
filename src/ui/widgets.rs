@@ -30,6 +30,29 @@ pub fn page_padding(ctx: &egui::Context) -> f32 {
     }
 }
 
+/// How far a row may move under a finger between its press and release
+/// and still count the two as a tap on it.
+const STEADY_TAP: f32 = 2.0;
+
+/// Whether `response` was clicked where it stands. On a touch screen a
+/// finger that stops a gliding list lands on whatever row is passing, and
+/// the row moves under it before it lifts: that tap only meant to stop the
+/// list, so it is no tap on the row.
+pub(crate) fn steady_tap(ui: &Ui, response: &egui::Response) -> bool {
+    let id = response.id.with("pressed-at");
+    let top = response.rect.top();
+    if response.is_pointer_button_down_on() && ui.input(|input| input.pointer.any_pressed()) {
+        ui.ctx().data_mut(|data| data.insert_temp(id, top));
+    }
+    if !response.clicked() {
+        return false;
+    }
+    let pressed = ui.ctx().data(|data| data.get_temp::<f32>(id));
+    // A screen reader's click has no finger to slide.
+    response.interact_pointer_pos().is_none()
+        || pressed.is_none_or(|pressed| (pressed - top).abs() <= STEADY_TAP)
+}
+
 /// How tall a menu's row is: a finger needs more than a pointer.
 fn menu_row_height(ctx: &egui::Context) -> f32 {
     if theme::touch(ctx) {
@@ -2104,7 +2127,8 @@ fn track_row_contents(
         // A finger has no hover and no second button: a tap plays the
         // song, as a double click does with a pointer, and the playing one
         // goes on playing. Picking several songs is a pointer's.
-        if ui.is_enabled() && response.clicked() && !response.double_clicked() && !unavailable {
+        let tapped = steady_tap(ui, &response);
+        if ui.is_enabled() && tapped && !response.double_clicked() && !unavailable {
             if !is_current {
                 app.actions.push(Action::PlayFromRow {
                     context: row.context.clone(),
@@ -4535,6 +4559,87 @@ mod tests {
                 assert!(!egui::DragAndDrop::has_any_payload(&ctx));
             }
         }
+    }
+
+    /// A finger that stops a gliding list lands on a row that keeps moving
+    /// under it until it lifts: that tap plays nothing. A tap on a row that
+    /// stands still plays it.
+    #[test]
+    fn a_tap_that_stops_a_gliding_list_plays_nothing() {
+        let mut app = test_app();
+        app.backend.shutdown();
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let item = song("spotify:track:passing");
+        let context = RowContext::Queue;
+        // `scrolled` stands for the list's glide: the row sits that much
+        // lower on the screen.
+        let draw = |app: &mut App, scrolled: f32, events: Vec<egui::Event>| {
+            let mut rect = Rect::NOTHING;
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(390.0, 600.0))),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                theme::settle_layout(ui.ctx());
+                ui.add_space(scrolled);
+                let (response, _) = track_row_response(
+                    ui,
+                    app,
+                    TrackRow {
+                        index: 0,
+                        number: Some(1),
+                        item: &item,
+                        context: &context,
+                        show_cover: true,
+                        show_album: false,
+                        added_at: None,
+                        added_by: None,
+                        show_added_by: false,
+                        show_plays: false,
+                        compact: false,
+                        thin: false,
+                        shift: 0.0,
+                        picked: false,
+                        picked_songs: &[],
+                        picked_positions: &[],
+                        position: None,
+                    },
+                );
+                rect = response.rect;
+            });
+            output.textures_delta.clear();
+            rect
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let plays = |action: &Action| matches!(action, Action::PlayFromRow { .. });
+        let rect = draw(&mut app, 0.0, vec![]);
+        let at = pos2(rect.left() + 200.0, rect.center().y);
+        draw(
+            &mut app,
+            0.0,
+            vec![egui::Event::PointerMoved(at), button(at, true)],
+        );
+        draw(&mut app, 6.0, vec![]);
+        draw(&mut app, 12.0, vec![button(at, false)]);
+        assert!(!app.actions.iter().any(plays), "{:?}", app.actions);
+        // Long enough after for the next tap not to make a double click.
+        for _ in 0..30 {
+            draw(&mut app, 12.0, vec![]);
+        }
+        draw(
+            &mut app,
+            12.0,
+            vec![egui::Event::PointerMoved(at), button(at, true)],
+        );
+        draw(&mut app, 12.0, vec![button(at, false)]);
+        assert!(app.actions.iter().any(plays), "{:?}", app.actions);
     }
 
     #[test]

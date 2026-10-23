@@ -707,7 +707,8 @@ mod tests {
     #[test]
     fn replacing_a_track_discards_held_audio_before_its_silent_intro() {
         // The bass boost's shelf holds a history of its own to discard.
-        for (equalizer_on, bass_boost_db) in [(false, 0.0), (true, 0.0), (true, 12.0)] {
+        let cases = [(false, 0.0), (false, 12.0), (true, 0.0), (true, 12.0)];
+        for (equalizer_on, bass_boost_db) in cases {
             let control = crate::sink::AudioControl::new(crate::sink::DEFAULT_BUFFER_MS);
             let eq = crate::eq::shared();
             let mut settings = crate::eq::EqSettings {

@@ -914,7 +914,9 @@ pub fn soft_button(
 }
 
 /// A [`soft_button`] whose icon turns into a cross on hover, allowing the
-/// entry to be dismissed. The returned flag reports clicks on that cross.
+/// entry to be dismissed. A finger cannot hover, so on a touch screen the
+/// cross stands at the button's end instead, always shown, with a target of
+/// its own. The returned flag reports clicks on that cross.
 pub fn soft_button_dismiss(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -944,8 +946,12 @@ fn soft_button_inner(
     let galley = crate::bidi::layout_line(ui.painter(), label, font, color);
     let icon_size = 15.0;
     let icon_width = if icon.is_some() { icon_size + 6.0 } else { 0.0 };
+    let trailing_cross = dismissible && icon.is_some() && touch(ui.ctx());
+    let cross_size = 13.0;
+    let cross_width = if trailing_cross { cross_size + 8.0 } else { 0.0 };
     let padding = Vec2::new(12.0, 7.0);
-    let size = Vec2::new(galley.size().x + icon_width, galley.size().y) + padding * 2.0;
+    let content = galley.size().x + icon_width + cross_width;
+    let size = Vec2::new(content, galley.size().y) + padding * 2.0;
     let (rect, response) = touch_target(ui, size, Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
@@ -954,13 +960,18 @@ fn soft_button_inner(
         egui::pos2(rect.left() + padding.x + icon_size / 2.0, rect.center().y),
         Vec2::splat(icon_size),
     );
+    let cross_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.right() - padding.x - cross_size / 2.0, rect.center().y),
+        Vec2::splat(cross_size),
+    );
     // Claimed after the button, so the cross sits on top and keeps its own click.
     let dismiss = (dismissible && icon.is_some()).then(|| {
-        let dismiss = ui.interact(
-            icon_rect.expand(3.0),
-            response.id.with("dismiss"),
-            Sense::click(),
-        );
+        let target = if trailing_cross {
+            egui::Rect::from_center_size(cross_rect.center(), Vec2::splat(TOUCH_TARGET))
+        } else {
+            icon_rect.expand(3.0)
+        };
+        let dismiss = ui.interact(target, response.id.with("dismiss"), Sense::click());
         dismiss.widget_info(|| {
             egui::WidgetInfo::labeled(
                 egui::WidgetType::Button,
@@ -986,7 +997,7 @@ fn soft_button_inner(
         ui.painter().rect_filled(rect, rect.height() / 2.0, fill);
         let mut x = rect.left() + padding.x;
         if let Some(icon) = icon {
-            let icon = if dismiss.is_some() && hovered {
+            let icon = if dismiss.is_some() && hovered && !trailing_cross {
                 Icon::X
             } else {
                 icon
@@ -996,6 +1007,10 @@ fn soft_button_inner(
         }
         let pos = egui::pos2(x, rect.center().y - galley.size().y / 2.0);
         ui.painter().galley(pos, galley, color);
+        if trailing_cross {
+            let tint = if active { color } else { palette.secondary };
+            Icon::X.image(tint, cross_size).paint_at(ui, cross_rect);
+        }
     }
     focus_ring(ui, &response);
     if let Some(dismiss) = dismiss {

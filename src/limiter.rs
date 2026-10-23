@@ -7,7 +7,9 @@
 //! - Fast attack and slow release catch transients without pumping.
 //! - A soft knee introduces gain reduction gradually.
 //! - A -1 dBFS threshold leaves room for inter-sample peaks after resampling.
-//! - Eight milliseconds of look-ahead lets gain settle before a peak arrives.
+//! - Eight milliseconds of look-ahead lets gain settle before a peak arrives,
+//!   and the gain answers to the loudest frame still held, so a crest longer
+//!   than the look-ahead (bass below about 60 Hz) cannot outlast it.
 //!
 //! Samples below the knee pass unchanged. A final clamp only guards against
 //! numerical overshoot.
@@ -64,17 +66,50 @@ pub struct Limiter {
     release: f64,
     /// Delayed frames, oldest first. Initial silence preserves block lengths.
     held: std::collections::VecDeque<[f64; 2]>,
+    /// The frames still to go out, the incoming one included, that are
+    /// louder than every frame after them: (frame number, louder channel),
+    /// oldest first, so the first is the loudest of the look-ahead (a
+    /// sliding-window maximum). Room for the whole window is made in `new`.
+    loudest: std::collections::VecDeque<(u64, f64)>,
+    /// Frames that have arrived, which numbers them.
+    arrived: u64,
+    /// Frames the look-ahead holds.
+    lookahead: u64,
 }
 
 impl Limiter {
     pub fn new(sample_rate: f64) -> Self {
         let lookahead = ((LOOKAHEAD_MS / 1000.0 * sample_rate).round() as usize).max(1);
+        // Room for the incoming frame as well, so that no block allocates.
+        let mut held = std::collections::VecDeque::with_capacity(lookahead + 1);
+        held.resize(lookahead, [0.0; 2]);
         Self {
             gain: 1.0,
             attack: coefficient(ATTACK_MS, sample_rate),
             release: coefficient(RELEASE_MS, sample_rate),
-            held: std::collections::VecDeque::from(vec![[0.0; 2]; lookahead]),
+            held,
+            loudest: std::collections::VecDeque::with_capacity(lookahead + 1),
+            arrived: 0,
+            lookahead: lookahead as u64,
         }
+    }
+
+    /// Notes the incoming frame's level and returns the loudest level of
+    /// the frames still to go out, the incoming one included.
+    fn loudest_to_come(&mut self, level: f64) -> f64 {
+        let start = self.arrived.saturating_sub(self.lookahead);
+        let window = &mut self.loudest;
+        // Frames that have gone out no longer count.
+        while window.front().is_some_and(|&(frame, _)| frame < start) {
+            window.pop_front();
+        }
+        // Nor do quieter frames ahead of this one: they go out first.
+        while window.back().is_some_and(|&(_, held)| held <= level) {
+            window.pop_back();
+        }
+        window.push_back((self.arrived, level));
+        self.arrived += 1;
+        window.front().map_or(level, |&(_, loudest)| loudest)
     }
 
     /// Limits interleaved stereo `frames` to `full_scale`.
@@ -88,12 +123,15 @@ impl Limiter {
         let threshold_db = to_db(full_scale) + THRESHOLD_DB;
         let ceiling = full_scale;
         for frame in frames.chunks_mut(2) {
-            // Calculate gain from the incoming frame and apply it to the
-            // delayed frame. Use the louder channel for both channels.
+            // Calculate gain from the loudest frame still to go out, the
+            // incoming one included, and apply it to the delayed frame. Use
+            // the louder channel for both channels. A gain from the incoming
+            // frame alone would recover while a long crest was still held.
             let peak = frame
                 .iter()
                 .fold(0.0f64, |loudest, sample| loudest.max(sample.abs()));
-            let target = from_db(-reduction_db(to_db(peak) - threshold_db));
+            let loudest = self.loudest_to_come(peak);
+            let target = from_db(-reduction_db(to_db(loudest) - threshold_db));
             // Reduce gain quickly and restore it slowly.
             let coefficient = if target < self.gain {
                 self.attack
@@ -115,6 +153,8 @@ impl Limiter {
 
 #[cfg(test)]
 mod tests {
+    use std::f64::consts::TAU;
+
     use super::*;
 
     const RATE: f64 = 44_100.0;
@@ -229,6 +269,66 @@ mod tests {
         limiter.process(&mut tone(0.1, 441), 1.0);
         assert!(limiter.gain > held, "it recovers");
         assert!(limiter.gain < 1.0, "but not all at once");
+    }
+
+    fn sine(hz: f64, frames: usize) -> Vec<f64> {
+        (0..frames)
+            .flat_map(|i| {
+                let sample = (TAU * hz * i as f64 / RATE).sin();
+                [sample, sample]
+            })
+            .collect()
+    }
+
+    /// The equalizer with the whole bass boost and then the limiter, in
+    /// packets, as `vis::Tapped` runs them.
+    fn boosted_and_limited(mut samples: Vec<f64>) -> Vec<f64> {
+        let eq = crate::eq::shared();
+        eq.set(crate::eq::EqSettings {
+            on: true,
+            bass_boost_db: crate::eq::BASS_BOOST_MAX_DB,
+            ..crate::eq::EqSettings::default()
+        });
+        let mut equalizer = crate::eq::Processor::new(eq);
+        let mut limiter = Limiter::new(RATE);
+        for packet in samples.chunks_mut(2048) {
+            equalizer.process(packet);
+            limiter.process(packet, 1.0);
+        }
+        samples
+    }
+
+    /// Full-scale bass under the whole bass boost, its crests longer than
+    /// the look-ahead, is held by the gain: nothing reaches the clamp at
+    /// the ceiling, and it settles a decibel under it.
+    #[test]
+    fn boosted_bass_never_reaches_the_clamp() {
+        for hz in [40.0, 50.0, 60.0] {
+            let samples = boosted_and_limited(sine(hz, 44_100));
+            assert!(
+                samples.iter().all(|sample| sample.abs() < 1.0),
+                "{hz} Hz reached the clamp"
+            );
+            let settled = peak(&samples[44_100..]);
+            assert!(settled < 0.95, "{hz} Hz settled at {settled}");
+        }
+    }
+
+    /// A boosted kick drum every half second over a quieter bed: each
+    /// kick is held by the gain, never flattened by the clamp.
+    #[test]
+    fn a_boosted_kick_over_a_bed_never_reaches_the_clamp() {
+        let music: Vec<f64> = (0..2 * 44_100)
+            .flat_map(|i| {
+                let since = (i % 22_050) as f64 / RATE;
+                let kick = 0.5 * (-since / 0.15).exp() * (TAU * 55.0 * since).sin();
+                let bed = 0.25 * (TAU * 220.0 * i as f64 / RATE).sin();
+                [kick + bed, kick + bed]
+            })
+            .collect();
+        let samples = boosted_and_limited(music);
+        let loudest = peak(&samples);
+        assert!(loudest < 0.95, "a kick left at {loudest}");
     }
 
     /// Output block length always matches input block length.

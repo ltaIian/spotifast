@@ -6167,6 +6167,7 @@ dependencies = [
  "apple-native-keyring-store",
  "base64",
  "clap",
+ "cpal",
  "ctr",
  "directories",
  "eframe",
@@ -6245,6 +6246,13 @@ dependencies = [
  "x11rb",
  "zbus",
  "zbus-secret-service-keyring-store",
+]
+
+[[package]]
+name = "spotifast-ios"
+version = "0.0.0"
+dependencies = [
+ "spotifast",
 ]
 
 [[package]]

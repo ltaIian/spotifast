@@ -706,11 +706,13 @@ mod tests {
 
     #[test]
     fn replacing_a_track_discards_held_audio_before_its_silent_intro() {
-        for equalizer_on in [false, true] {
+        // The bass boost's shelf holds a history of its own to discard.
+        for (equalizer_on, bass_boost_db) in [(false, 0.0), (true, 0.0), (true, 12.0)] {
             let control = crate::sink::AudioControl::new(crate::sink::DEFAULT_BUFFER_MS);
             let eq = crate::eq::shared();
             let mut settings = crate::eq::EqSettings {
                 on: equalizer_on,
+                bass_boost_db,
                 ..crate::eq::EqSettings::default()
             };
             settings.bands_db[0] = 12.0;
@@ -760,6 +762,48 @@ mod tests {
         let samples = recorded.lock().unwrap();
         assert!(samples[..706].iter().all(|sample| *sample == 0.25));
         assert!(samples[706..].iter().all(|sample| *sample == 0.0));
+    }
+
+    /// The loudest sample of a block.
+    fn peak(samples: &[f64]) -> f64 {
+        samples
+            .iter()
+            .fold(0.0f64, |loudest, sample| loudest.max(sample.abs()))
+    }
+
+    /// A full-scale 60 Hz tone under the whole bass boost leaves at or under
+    /// the ceiling with no pre-gain: the final limiter holds it, and once it
+    /// has caught the tone its own gain does, not the clamp behind it.
+    #[test]
+    fn a_full_bass_boost_stays_within_the_ceiling() {
+        let control = crate::sink::AudioControl::new(crate::sink::DEFAULT_BUFFER_MS);
+        let eq = crate::eq::shared();
+        eq.set(crate::eq::EqSettings {
+            on: true,
+            bass_boost_db: crate::eq::BASS_BOOST_MAX_DB,
+            ..crate::eq::EqSettings::default()
+        });
+        let (mut tapped, recorded) = recorded_tap(control, eq);
+        let rate = f64::from(SAMPLE_RATE);
+        let tone: Vec<f64> = (0..SAMPLE_RATE as usize)
+            .flat_map(|i| {
+                let sample = (std::f64::consts::TAU * 60.0 * i as f64 / rate).sin();
+                [sample, sample]
+            })
+            .collect();
+        for packet in tone.chunks(2048) {
+            tapped
+                .write(
+                    AudioPacket::Samples(packet.to_vec()),
+                    &mut Converter::new(None),
+                )
+                .unwrap();
+        }
+        let samples = recorded.lock().unwrap();
+        let loudest = peak(&samples);
+        assert!(loudest <= 1.0, "a sample left at {loudest}");
+        let settled = peak(&samples[samples.len() / 2..]);
+        assert!(settled < 0.99, "the clamp held it at {settled}");
     }
     fn sine(hz: f32, amplitude: f32, count: usize) -> Vec<f32> {
         (0..count)

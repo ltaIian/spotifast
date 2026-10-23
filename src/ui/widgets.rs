@@ -3203,10 +3203,13 @@ pub fn chips<T: PartialEq + Copy>(
     current: T,
 ) -> Option<T> {
     let row = ui.horizontal_wrapped(|ui| chip_buttons(ui, palette, options, current));
-    row.inner
+    row.inner.0
 }
 
-/// [`chips`] on one line that never wraps, for a row that scrolls sideways.
+/// [`chips`] on one line that never wraps, for a row that scrolls sideways
+/// inside a horizontal `ScrollArea`. The current chip is scrolled to the
+/// middle of the row when the row first shows and again whenever another
+/// one becomes current.
 pub fn chip_line<T: PartialEq + Copy>(
     ui: &mut Ui,
     palette: &Palette,
@@ -3214,24 +3217,47 @@ pub fn chip_line<T: PartialEq + Copy>(
     current: T,
 ) -> Option<T> {
     let row = ui.horizontal(|ui| chip_buttons(ui, palette, options, current));
-    row.inner
+    let (selected, current_rect) = row.inner;
+    let index = options.iter().position(|(value, _)| *value == current);
+    let id = ui.make_persistent_id("chip-line-shown");
+    let pass = ui.ctx().cumulative_pass_nr();
+    let seen = ui.ctx().data(|data| data.get_temp::<(u64, Option<usize>)>(id));
+    ui.ctx().data_mut(|data| data.insert_temp(id, (pass, index)));
+    // Not drawn the pass before: the row has just come into view.
+    let fresh = seen.is_none_or(|(at, _)| at + 1 < pass);
+    let moved = seen.is_some_and(|(_, shown)| shown != index);
+    if let Some(rect) = current_rect.filter(|_| fresh || moved) {
+        let animation = if fresh {
+            egui::style::ScrollAnimation::none()
+        } else {
+            ui.style().scroll_animation
+        };
+        ui.scroll_to_rect_animation(rect, Some(Align::Center), animation);
+    }
+    selected
 }
 
-/// The chips themselves, in whatever row holds them.
+/// The chips themselves, in whatever row holds them. Returns the one
+/// clicked, if any, and where the current one is.
 fn chip_buttons<T: PartialEq + Copy>(
     ui: &mut Ui,
     palette: &Palette,
     options: &[(T, &str)],
     current: T,
-) -> Option<T> {
+) -> (Option<T>, Option<Rect>) {
     ui.spacing_mut().item_spacing.x = 8.0;
     let mut selected = None;
+    let mut current_rect = None;
     for (value, label) in options {
-        if theme::soft_button(ui, palette, None, label, *value == current).clicked() {
+        let response = theme::soft_button(ui, palette, None, label, *value == current);
+        if *value == current {
+            current_rect = Some(response.rect);
+        }
+        if response.clicked() {
             selected = Some(*value);
         }
     }
-    selected
+    (selected, current_rect)
 }
 
 /// A text input with the native clipboard actions and a selection-aware menu.

@@ -46,15 +46,7 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
         });
     });
     ui.add_space(12.0);
-    // One row of chips that scrolls sideways, so the curve and the bands
-    // stay in view.
-    let current = crate::autoscroll::show(
-        ui,
-        egui::ScrollArea::horizontal().id_salt("equalizer-presets"),
-        egui::Vec2b::new(true, false),
-        |ui| settings::eq_preset_chips(app, ui, true),
-    )
-    .inner;
+    let current = preset_row(app, ui);
     ui.add_space(8.0);
     settings::eq_preset_controls(app, ui, current.as_deref());
     ui.add_space(12.0);
@@ -80,6 +72,40 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
     if DEMO_END.with(std::cell::Cell::get) {
         ui.scroll_to_cursor(Some(Align::Max));
     }
+}
+
+/// The presets on one row of chips that scrolls sideways, so the curve and
+/// the bands stay in view. The row runs out to the screen's edges, past the
+/// page's margins, where a chip cut in half shows there is more of it; the
+/// first chip still lines up with the page. Returns the saved preset in use.
+fn preset_row(app: &mut App, ui: &mut egui::Ui) -> Option<String> {
+    let bleed = widgets::page_padding(ui.ctx());
+    let top = ui.cursor().top();
+    let edges = ui.max_rect().expand2(vec2(bleed, 0.0));
+    let row = egui::Rect::from_x_y_ranges(edges.x_range(), top..=top + 200.0);
+    let mut strip = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(row)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    let current = crate::autoscroll::show(
+        &mut strip,
+        egui::ScrollArea::horizontal().id_salt("equalizer-presets"),
+        egui::Vec2b::new(true, false),
+        |ui| {
+            ui.horizontal(|ui| {
+                ui.add_space(bleed);
+                let current = settings::eq_preset_chips(app, ui, true);
+                ui.add_space(bleed);
+                current
+            })
+            .inner
+        },
+    )
+    .inner;
+    let height = strip.min_rect().height();
+    ui.allocate_space(vec2(ui.available_width(), height));
+    current
 }
 
 /// The ten bands in a grid, then the preamp as a bar across the width: how

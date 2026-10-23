@@ -1060,10 +1060,10 @@ fn contents(app: &mut App, ui: &mut egui::Ui, grid_art: Option<Rect>) {
                 16.0,
                 palette.secondary,
                 palette.text,
-                super::keys::platform_shortcut(
+                super::keys::hint(super::keys::platform_shortcut(
                     &gettext(locale, "Hide sidebar (Ctrl+B)"),
                     &gettext(locale, "Hide sidebar (Cmd+B)"),
-                ),
+                )),
             )
             .clicked()
             {

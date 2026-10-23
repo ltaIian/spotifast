@@ -7,7 +7,8 @@ use crate::theme::{self, Icon};
 use crate::updates::DownloadState;
 
 pub fn show(app: &mut App, ctx: &egui::Context) {
-    if !app.show_update {
+    // A sideloaded iPhone app cannot replace itself.
+    if !app.show_update || theme::is_ios() {
         return;
     }
     let Some(release) = app.update.clone() else {

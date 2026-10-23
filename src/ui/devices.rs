@@ -598,7 +598,8 @@ pub fn popup(app: &mut App, ctx: &egui::Context) {
                         }
                     },
                 );
-                if app.local_ready {
+                // An iPhone plays through the route the system picks.
+                if app.local_ready && !crate::theme::is_ios() {
                     output_picker(app, ui);
                 }
             });

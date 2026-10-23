@@ -625,7 +625,8 @@ fn search(app: &mut App, ui: &mut egui::Ui, width: f32) {
 }
 
 /// The account's avatar and its menu. In the compact layout the menu also
-/// opens the equalizer, which a phone has no Winamp window for.
+/// opens the equalizer, which a phone has no Winamp window for, and on iOS
+/// it leaves out the keyboard shortcuts.
 fn account(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let locale = app.locale;
@@ -724,12 +725,14 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
             {
                 app.actions.push(Action::Open(Page::Equalizer));
             }
-            if super::widgets::menu_item(
-                ui,
-                &palette,
-                Some(Icon::Info),
-                &gettext(locale, "Keyboard shortcuts"),
-            ) {
+            if !theme::is_ios()
+                && super::widgets::menu_item(
+                    ui,
+                    &palette,
+                    Some(Icon::Info),
+                    &gettext(locale, "Keyboard shortcuts"),
+                )
+            {
                 app.actions
                     .push(Action::ShowDialog(crate::model::Dialog::Shortcuts));
             }

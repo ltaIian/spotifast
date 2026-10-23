@@ -399,6 +399,10 @@ fn local_files_detail(app: &App) -> String {
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let locale = app.locale;
+    // What an iPhone does not have stays out of its Settings: the tray,
+    // updates, starting at login, folders on disk, zoom, the Winamp skin
+    // and MilkDrop.
+    let ios = theme::is_ios();
     ui.add_space(8.0);
     theme::text(
         ui,
@@ -708,11 +712,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 ),
             )
             .to_owned(),
-        ),
+        )
+        .when(!ios),
         RowText::new(
             update_checks.clone(),
             gettext(locale, "Checks GitHub once a day. No personal data is sent."),
-        ),
+        )
+        .when(!ios),
         RowText::new(
             gettext(locale, "Output buffer"),
             gettext(
@@ -733,7 +739,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 locale,
                 "Downloads in the background. You choose when to restart.",
             ),
-        ),
+        )
+        .when(!ios),
         RowText::new(
             gettext(locale, "MacBook notch widget"),
             gettext(
@@ -741,8 +748,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 "Show interactive Now Playing widget when hovering over the notch.",
             ),
         )
-        .when(cfg!(target_os = "macos")),
-        RowText::new(gettext(locale, "Local files"), local_files_detail(app)),
+        .when(cfg!(target_os = "macos") && !ios),
+        RowText::new(gettext(locale, "Local files"), local_files_detail(app)).when(!ios),
         RowText::new(
             show_in_dock.clone(),
             gettext(
@@ -750,14 +757,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 "When off, Spotifast lives in the menu bar and leaves Cmd+Tab. Open it from its menu-bar icon.",
             ),
         )
-        .when(cfg!(target_os = "macos")),
+        .when(cfg!(target_os = "macos") && !ios),
         // The macOS menu bar already draws its icon black or white to match.
         RowText::new(
             gettext(locale, "Tray icon"),
             gettext(locale, "White or black can match your panel or taskbar."),
         )
-        .when(!cfg!(target_os = "macos")),
-        RowText::new(start_with_computer.clone(), start_detail).when(start_available),
+        .when(!cfg!(target_os = "macos") && !ios),
+        RowText::new(start_with_computer.clone(), start_detail).when(start_available && !ios),
     ];
     if section_matches(&needle, &playback, &playback_rows) {
         any_visible = true;
@@ -1215,7 +1222,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 ),
             )
             .to_owned(),
-        ),
+        )
+        .when(!ios),
         RowText::new(
             middle_click.clone(),
             gettext(
@@ -1327,14 +1335,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             {
                                 app.actions.push(Action::OpenUrl(THEMES_GUIDE_URL.into()));
                             }
-                            if theme::soft_button(
-                                ui,
-                                &palette,
-                                Some(Icon::ExternalLink),
-                                folder,
-                                false,
-                            )
-                            .clicked()
+                            if !ios
+                                && theme::soft_button(
+                                    ui,
+                                    &palette,
+                                    Some(Icon::ExternalLink),
+                                    folder,
+                                    false,
+                                )
+                                .clicked()
                             {
                                 app.actions.push(Action::OpenThemesFolder);
                             }
@@ -1740,7 +1749,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 .join(" "),
         ),
     ];
-    if section_matches(&needle, &skins, &skins_rows) {
+    if !ios && section_matches(&needle, &skins, &skins_rows) {
         any_visible = true;
         section(ui, &palette, &skins, |ui| {
             filtered_row(ui, &palette, &needle, &skins, &skins_rows[0], |ui| {
@@ -1965,7 +1974,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 .join(" "),
         ),
     ];
-    if section_matches(&needle, "MilkDrop", &milkdrop_rows) {
+    if !ios && section_matches(&needle, "MilkDrop", &milkdrop_rows) {
         any_visible = true;
         section(ui, &palette, "MilkDrop", |ui| {
             filtered_row(ui, &palette, &needle, "MilkDrop", &milkdrop_rows[0], |ui| {
@@ -2285,11 +2294,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 } else {
                     &check_for_updates
                 };
-                if theme::soft_button(ui, &palette, Some(Icon::Refresh), check_label, false)
-                    .clicked()
-                    && !app.update_checking
-                {
-                    app.actions.push(Action::CheckForUpdates);
+                // A sideloaded iPhone app cannot update itself.
+                if !ios {
+                    let check =
+                        theme::soft_button(ui, &palette, Some(Icon::Refresh), check_label, false);
+                    if check.clicked() && !app.update_checking {
+                        app.actions.push(Action::CheckForUpdates);
+                    }
                 }
                 if theme::soft_button(
                     ui,
@@ -2303,10 +2314,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     app.actions
                         .push(Action::OpenUrl(RELEASE_NOTES_URL.to_owned()));
                 }
-                if theme::soft_button(ui, &palette, Some(Icon::Info), &keyboard_shortcuts, false)
-                    .clicked()
-                {
-                    app.actions.push(Action::ShowDialog(Dialog::Shortcuts));
+                // Nor does it have a keyboard for the shortcuts.
+                if !ios {
+                    let shortcuts = theme::soft_button(
+                        ui,
+                        &palette,
+                        Some(Icon::Info),
+                        &keyboard_shortcuts,
+                        false,
+                    );
+                    if shortcuts.clicked() {
+                        app.actions.push(Action::ShowDialog(Dialog::Shortcuts));
+                    }
                 }
                 if theme::soft_button(ui, &palette, Some(Icon::ExternalLink), &source_code, false)
                     .clicked()

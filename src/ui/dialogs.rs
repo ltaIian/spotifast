@@ -36,7 +36,8 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             80
         }))
         .show(ctx, |ui| {
-            ui.set_width(420.0);
+            // No wider than the screen, less a margin, its frame included.
+            ui.set_width(420.0_f32.min(theme::content_rect(ctx).width() - 66.0));
             match dialog {
                 // Drawn by cover_art above.
                 Dialog::CoverArt { .. } => {}
@@ -670,7 +671,7 @@ mod tests {
 /// page. A click anywhere, on the cover or around it, or Esc closes it.
 fn cover_art(app: &mut App, ctx: &egui::Context, url: &str, shown: Option<&str>, title: &str) {
     let palette = app.palette;
-    let side = cover_art_side(ctx.content_rect().size());
+    let side = cover_art_side(theme::content_rect(ctx).size());
     let response = egui::Modal::new(egui::Id::new("cover-art"))
         .frame(Frame::new().shadow(egui::epaint::Shadow {
             offset: [0, 10],

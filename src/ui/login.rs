@@ -29,7 +29,19 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, connecting: bool) {
             fastframe_titlebar::drag(ui, drag_rect);
             let top = super::blend(palette.window, palette.accent, 0.10);
             super::widgets::paint_vertical_gradient(ui, rect, top, palette.window);
-            let card_width = 440.0;
+            // A phone's status bar and home indicator sit over the gradient's ends.
+            if let Some(band) = super::status_bar_band(ui.ctx()) {
+                super::fill_band(ui, band, top);
+            }
+            if let Some(band) = super::home_indicator_band(ui.ctx()) {
+                super::fill_band(ui, band, palette.window);
+            }
+            // On a phone the card spans the screen, less a margin, and sits
+            // near the top, clear of the keyboard.
+            let compact = theme::compact(ui.ctx());
+            let card_width = if compact { 440.0_f32.min(rect.width() - 32.0) } else { 440.0 };
+            let margin: i8 = if compact { 20 } else { 36 };
+            let margins = 2.0 * f32::from(margin);
             let proxy_id = egui::Id::new("login-proxy-open");
             let proxy_open = ui
                 .ctx()
@@ -48,13 +60,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, connecting: bool) {
             // (#782). It only scrolls when the window is too short for it.
             let content_id = egui::Id::new("login-card-content");
             let content = ui.ctx().data(|data| data.get_temp::<f32>(content_id));
-            let card = card_rect(rect, card_width, card_height.min(room), content, room);
+            let card = if compact {
+                compact_card_rect(rect, card_width, card_height.min(room), content, room)
+            } else {
+                card_rect(rect, card_width, card_height.min(room), content, room)
+            };
             let mut card_ui = ui.new_child(egui::UiBuilder::new().max_rect(card).layout(Layout::top_down(Align::Center)));
             Frame::new()
                 .fill(palette.panel)
                 .stroke(Stroke::new(1.0, palette.outline))
                 .corner_radius(CornerRadius::same(theme::RADIUS + 8))
-                .inner_margin(Margin::same(36))
+                .inner_margin(Margin::same(margin))
                 .shadow(egui::epaint::Shadow {
                     offset: [0, 16],
                     blur: 48,
@@ -64,10 +80,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, connecting: bool) {
                 .show(&mut card_ui, |ui| {
                     let scroll = egui::ScrollArea::vertical()
                         .id_salt("login-card-scroll")
-                        .max_height((card.height() - 72.0).max(0.0))
+                        .max_height((card.height() - margins).max(0.0))
                         .auto_shrink([false, true])
                         .show(ui, |ui| {
-                    ui.set_width(card_width - 72.0);
+                    ui.set_width(card_width - margins);
                     ui.spacing_mut().item_spacing.y = 8.0;
                     let (logo, _) = ui.allocate_exact_size(Vec2::splat(72.0), egui::Sense::hover());
                     theme::logo(ui, logo.center(), 72.0);
@@ -214,6 +230,19 @@ fn card_rect(rect: Rect, width: f32, base: f32, content: Option<f32>, room: f32)
     let top = (rect.center().y - 20.0 - base / 2.0).min(rect.bottom() - 52.0 - height);
     Rect::from_min_size(
         pos2(rect.center().x - width / 2.0, top),
+        Vec2::new(width, height),
+    )
+}
+
+/// The card on a phone: near the top, below a margin, so the software
+/// keyboard leaves its fields in view, and as tall as what it holds, up to
+/// the `room` the screen has.
+fn compact_card_rect(rect: Rect, width: f32, base: f32, content: Option<f32>, room: f32) -> Rect {
+    // The Frame's inner margin and its one-point stroke, above and below.
+    const MARGINS: f32 = 42.0;
+    let height = content.map_or(base, |content| content + MARGINS).min(room);
+    Rect::from_min_size(
+        pos2(rect.center().x - width / 2.0, rect.top() + 24.0),
         Vec2::new(width, height),
     )
 }

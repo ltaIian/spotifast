@@ -4,19 +4,29 @@
 # Phone size is 390 by 844 points, an iPhone 14 or 15. `ios` previews the
 # iPhone build on the desktop demo: what iOS lacks is hidden, and the safe
 # area of a phone with a Dynamic Island (59 points on top, 34 below) is kept
-# clear the way the real insets keep it.
+# clear the way the real insets keep it. --demo-click taps a point, given in
+# points from the window's top left: 32,85 is the library button, 358,85 the
+# account, 150,778 the player bar.
 home|--demo-size 390x844 --demo-page home --demo-show ios
 playlist|--demo-size 390x844 --demo-page playlist:pl1 --demo-show ios
-equalizer|--demo-size 390x844 --demo-page equalizer --demo-show ios
+equalizer|--demo-size 390x844 --demo-page equalizer --demo-show ios,eq-user-presets
+equalizer-bands|--demo-size 390x844 --demo-page equalizer --demo-show ios,eq-user-presets,equalizer-end
 settings|--demo-size 390x844 --demo-page settings --demo-show ios
+settings-equalizer|--demo-size 390x844 --demo-page settings --demo-show ios,eq-user-presets,settings-equalizer
 signed-out|--demo-size 390x844 --demo-show ios,signed-out
 queue|--demo-size 390x844 --demo-page home --demo-show ios,queue
+now-playing|--demo-size 390x844 --demo-page home --demo-show ios --demo-click 150,778
+library|--demo-size 390x844 --demo-page home --demo-show ios --demo-click 32,85
+account-menu|--demo-size 390x844 --demo-page home --demo-show ios --demo-click 358,85
 devices|--demo-size 390x844 --demo-page home --demo-show ios,devices
 dialog|--demo-size 390x844 --demo-page home --demo-show ios,create
 home-dark|--demo-size 390x844 --demo-page home --demo-show ios,dark
+now-playing-dark|--demo-size 390x844 --demo-page home --demo-show ios,dark --demo-click 150,778
 # The compact layout on a desktop window that narrow (no iOS preview).
 compact-playlist|--demo-size 390x844 --demo-page playlist:pl1
-# Desktop size: the desktop look must not change.
+# Desktop size: the desktop look must not change, apart from the new Bass
+# boost slider under the equalizer's bands in Settings.
 desktop-home|--demo-size 1280x800 --demo-page home
 desktop-settings|--demo-size 1280x800 --demo-page settings
 desktop-playlist|--demo-size 1280x800 --demo-page playlist:pl1
+desktop-settings-equalizer|--demo-size 1280x800 --demo-page settings --demo-show eq-user-presets,settings-equalizer

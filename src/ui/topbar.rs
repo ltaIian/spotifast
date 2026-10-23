@@ -47,6 +47,15 @@ const LEAD_GUESS: f32 = super::widgets::PAGE_PADDING + 2.0 * 32.0 + 3.0 * ITEM_S
 /// A badge collapsed to its icon: a square as tall as its 12.5 pt label.
 const BADGE_CHIP: f32 = 15.0 + BADGE_PADDING_Y;
 
+/// The compact bar's two rows: its buttons, then the search field.
+const COMPACT_ROW_HEIGHT: f32 = 52.0;
+const COMPACT_SEARCH_ROW_HEIGHT: f32 = 48.0;
+/// The gap between the compact bar's buttons.
+const COMPACT_SPACING: f32 = 4.0;
+/// How far a finger-sized button reaches past the circle it draws; the
+/// page's margin lines up with the circle.
+const COMPACT_EDGE_INSET: f32 = 6.0;
+
 fn lead_id() -> egui::Id {
     egui::Id::new("topbar-lead")
 }
@@ -161,8 +170,14 @@ fn nav_button(
     enabled: bool,
     tooltip: &str,
 ) -> egui::Response {
+    // A finger's target around the same 32-point circle.
+    let size = if theme::touch(ui.ctx()) {
+        theme::TOUCH_TARGET
+    } else {
+        32.0
+    };
     let (rect, response) = ui.allocate_exact_size(
-        Vec2::splat(32.0),
+        Vec2::splat(size),
         if enabled {
             Sense::click()
         } else {
@@ -193,6 +208,10 @@ fn nav_button(
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
+    if theme::compact(ui.ctx()) {
+        show_compact(app, ui);
+        return;
+    }
     let palette = app.palette;
     let locale = app.locale;
     let width = ui.available_width();
@@ -343,183 +362,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             ui.ctx().data_mut(|data| data.insert_temp(lead_id(), lead));
             let fit = topbar_fit(search_room, controls, badges(true), badges(false));
             let search_width = fit.search;
-            let id = egui::Id::new("global-search");
-            let before = app.search.query.clone();
-            let selected = egui::TextEdit::load_state(ui.ctx(), id)
-                .and_then(|state| state.cursor.char_range())
-                .is_some_and(|range| !range.is_empty());
-            let response = super::widgets::search_field(
-                ui,
-                &palette,
-                app.locale,
-                id,
-                &mut app.search.query,
-                &gettext(locale, "What do you want to play?"),
-                search_width,
-            );
-            if app.search.focus_requested {
-                app.search.focus_requested = false;
-                response.request_focus();
-            }
-            // Clear empties the field and hands it focus in the same frame.
-            // Neither should leave the page: only typing a query does.
-            let cleared = app.search.query.is_empty() && !before.is_empty();
-            if response.gained_focus() && !cleared && !matches!(app.page(), Page::Search) {
-                app.actions.push(Action::Open(Page::Search));
-            }
-            if app.search.query != before {
-                // Typing over a selection, or emptying the field, starts a
-                // new query rather than editing the last one.
-                if selected || app.search.query.is_empty() {
-                    app.actions.push(Action::EndSearchRun);
-                }
-                app.search.typed_at = Some(std::time::Instant::now());
-                if !cleared && !matches!(app.page(), Page::Search) {
-                    app.actions.push(Action::Open(Page::Search));
-                }
-            }
-            if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
-                let query = app.search.query.clone();
-                app.actions.push(Action::Search(query));
-            }
-            if response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Escape)) {
-                response.surrender_focus();
-            }
+            search(app, ui, search_width);
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(window_controls.topbar_width);
                 ui.add_space(super::widgets::PAGE_PADDING);
                 // Account.
-                let (name, avatar) = app
-                    .user
-                    .as_ref()
-                    .map(|user| {
-                        (
-                            user.name().to_string(),
-                            pick_image(&user.images, app.art_px(28.0)).map(str::to_string),
-                        )
-                    })
-                    .unwrap_or_default();
-                let (rect, response) =
-                    ui.allocate_exact_size(Vec2::splat(AVATAR_SIZE), Sense::click());
-                if ui.is_rect_visible(rect) {
-                    let fill = if response.hovered() {
-                        palette.surface_hover
-                    } else {
-                        palette.surface
-                    };
-                    ui.painter().circle_filled(rect.center(), 18.0, fill);
-                    let inner = egui::Rect::from_center_size(rect.center(), Vec2::splat(28.0));
-                    match avatar.as_deref() {
-                        Some(url) => super::widgets::paint_cover(
-                            ui,
-                            &palette,
-                            Some(url),
-                            inner,
-                            14.0,
-                            Icon::User,
-                            Some(app.backend.art()),
-                        ),
-                        None => {
-                            let initial = name
-                                .chars()
-                                .next()
-                                .unwrap_or('?')
-                                .to_uppercase()
-                                .to_string();
-                            ui.painter()
-                                .circle_filled(inner.center(), 14.0, palette.accent);
-                            ui.painter().text(
-                                inner.center(),
-                                egui::Align2::CENTER_CENTER,
-                                initial,
-                                theme::bold(13.0),
-                                palette.on_accent,
-                            );
-                        }
-                    }
-                }
-                let response = response.on_hover_text(&name);
-                egui::Popup::menu(&response)
-                    .frame(super::widgets::menu_frame(&palette))
-                    .align(egui::RectAlign::BOTTOM_END)
-                    .show(|ui| {
-                        ui.set_width(200.0);
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space(10.0);
-                            theme::text(ui, &name, theme::semibold(14.0), palette.text);
-                        });
-                        if let Some(product) =
-                            app.user.as_ref().and_then(|user| user.product.clone())
-                        {
-                            ui.horizontal(|ui| {
-                                ui.add_space(10.0);
-                                theme::text(
-                                    ui,
-                                    capitalize(&product),
-                                    theme::regular(12.0),
-                                    palette.secondary,
-                                );
-                            });
-                        }
-                        super::widgets::menu_separator(ui, &palette);
-                        if super::widgets::menu_item(
-                            ui,
-                            &palette,
-                            Some(Icon::Settings),
-                            &gettext(locale, "Settings"),
-                        ) {
-                            app.actions.push(Action::Open(Page::Settings));
-                        }
-                        if super::widgets::menu_item(
-                            ui,
-                            &palette,
-                            Some(Icon::Info),
-                            &gettext(locale, "Keyboard shortcuts"),
-                        ) {
-                            app.actions
-                                .push(Action::ShowDialog(crate::model::Dialog::Shortcuts));
-                        }
-                        super::widgets::menu_separator(ui, &palette);
-                        if super::widgets::menu_item(
-                            ui,
-                            &palette,
-                            Some(Icon::LogOut),
-                            &gettext(locale, "Sign out"),
-                        ) {
-                            app.actions.push(Action::SignOut);
-                        }
-                    });
+                account(app, ui);
                 if !app.network_reachable {
                     ui.add_space(4.0);
-                    let (rect, response) =
-                        ui.allocate_exact_size(Vec2::splat(ICON_BUTTON_SIZE), Sense::hover());
-                    if ui.is_rect_visible(rect) {
-                        let fill = if response.hovered() {
-                            if palette.dark {
-                                egui::Color32::from_rgb(38, 110, 205)
-                            } else {
-                                egui::Color32::from_rgb(66, 133, 244)
-                            }
-                        } else if palette.dark {
-                            egui::Color32::from_rgb(28, 92, 178)
-                        } else {
-                            egui::Color32::from_rgb(41, 121, 255)
-                        };
-                        ui.painter().circle_filled(rect.center(), 14.5, fill);
-                        theme::paint_icon(
-                            ui,
-                            Icon::WifiOff,
-                            rect,
-                            ICON_BUTTON_ICON,
-                            egui::Color32::WHITE,
-                        );
-                    }
-                    response.on_hover_text(gettext(
-                        locale,
-                        "Spotifast is offline. Reconnecting automatically when connection returns.",
-                    ));
+                    offline(app, ui);
                 }
                 ui.add_space(4.0);
                 if theme::icon_button(
@@ -625,6 +477,307 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             });
         },
     );
+}
+
+/// The compact layout's top bar, a phone's: the navigation and the account
+/// on one row, and the search field across the row below. The library
+/// button opens the library over the page, since there is no room beside
+/// it.
+fn show_compact(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let width = ui.available_width();
+    let padding = super::widgets::COMPACT_PAGE_PADDING;
+    // Room for macOS's traffic lights over a desktop window this narrow.
+    ui.add_space(theme::titlebar_inset(ui.ctx()));
+    ui.allocate_ui_with_layout(
+        vec2(width, COMPACT_ROW_HEIGHT),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.add_space(padding - COMPACT_EDGE_INSET);
+            ui.spacing_mut().item_spacing.x = COMPACT_SPACING;
+            let library = gettext(locale, "Library");
+            if nav_button(ui, &palette, Icon::PanelLeft, true, &library).clicked() {
+                super::set_library_open(ui.ctx(), true);
+            }
+            if nav_button(ui, &palette, Icon::House, true, &gettext(locale, "Home")).clicked() {
+                app.actions.push(Action::Open(Page::Home));
+            }
+            if nav_button(
+                ui,
+                &palette,
+                Icon::ChevronLeft,
+                app.can_go_back(),
+                &gettext(locale, "Back"),
+            )
+            .clicked()
+            {
+                app.actions.push(Action::Back);
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.add_space(padding - COMPACT_EDGE_INSET);
+                account(app, ui);
+                if !app.network_reachable {
+                    offline(app, ui);
+                }
+                if theme::icon_button(
+                    ui,
+                    Icon::Settings,
+                    ICON_BUTTON_ICON,
+                    palette.secondary,
+                    palette.text,
+                    &gettext(locale, "Settings"),
+                )
+                .clicked()
+                {
+                    app.actions.push(Action::Open(Page::Settings));
+                }
+                if let Some(activity) = app.background_activity() {
+                    let hint = match activity {
+                        BackgroundActivity::Library => gettext(locale, "Updating your library…"),
+                        BackgroundActivity::Updates => gettext(locale, "Checking for updates…"),
+                        BackgroundActivity::Spotify => gettext(locale, "Waiting for Spotify…"),
+                    };
+                    theme::spinner(ui, SPINNER_SIZE, palette.secondary)
+                        .on_hover_text(hint.as_ref());
+                }
+                // Where playback is, as an icon; its name is in the
+                // devices list the badge opens.
+                if let Some(now) = app.now_playing().filter(|now| !now.local) {
+                    let icon = now
+                        .device_kind
+                        .as_deref()
+                        .map_or(Icon::Speaker, crate::ui::devices::device_icon);
+                    let label = match now.device_name {
+                        Some(device) => {
+                            // Translators: {device} is the name of the device playing the music.
+                            gettext(locale, "Playing on {device}").replace("{device}", &device)
+                        }
+                        None => gettext(locale, "Playing on another device").into_owned(),
+                    };
+                    let galley =
+                        ui.painter()
+                            .layout_no_wrap(label, theme::medium(12.5), palette.accent);
+                    if badge(ui, &palette, icon, galley, DEVICE_BADGE_PADDING, false).clicked() {
+                        app.actions.push(Action::ToggleDevicesPopup);
+                    }
+                }
+            });
+        },
+    );
+    ui.allocate_ui_with_layout(
+        vec2(width, COMPACT_SEARCH_ROW_HEIGHT),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.add_space(padding);
+            search(app, ui, (width - 2.0 * padding).max(SEARCH_MIN));
+        },
+    );
+}
+
+/// The search field. Focusing it or typing in it goes to the Search page,
+/// where the search runs as the person types; Enter runs it at once.
+fn search(app: &mut App, ui: &mut egui::Ui, width: f32) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let id = egui::Id::new("global-search");
+    let before = app.search.query.clone();
+    let selected = egui::TextEdit::load_state(ui.ctx(), id)
+        .and_then(|state| state.cursor.char_range())
+        .is_some_and(|range| !range.is_empty());
+    let response = super::widgets::search_field(
+        ui,
+        &palette,
+        app.locale,
+        id,
+        &mut app.search.query,
+        &gettext(locale, "What do you want to play?"),
+        width,
+    );
+    if app.search.focus_requested {
+        app.search.focus_requested = false;
+        response.request_focus();
+    }
+    // Clear empties the field and hands it focus in the same frame.
+    // Neither should leave the page: only typing a query does.
+    let cleared = app.search.query.is_empty() && !before.is_empty();
+    if response.gained_focus() && !cleared && !matches!(app.page(), Page::Search) {
+        app.actions.push(Action::Open(Page::Search));
+    }
+    if app.search.query != before {
+        // Typing over a selection, or emptying the field, starts a
+        // new query rather than editing the last one.
+        if selected || app.search.query.is_empty() {
+            app.actions.push(Action::EndSearchRun);
+        }
+        app.search.typed_at = Some(std::time::Instant::now());
+        if !cleared && !matches!(app.page(), Page::Search) {
+            app.actions.push(Action::Open(Page::Search));
+        }
+    }
+    if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+        let query = app.search.query.clone();
+        app.actions.push(Action::Search(query));
+    }
+    if response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+        response.surrender_focus();
+    }
+}
+
+/// The account's avatar and its menu. In the compact layout the menu also
+/// opens the equalizer, which a phone has no Winamp window for, and on iOS
+/// it leaves out the keyboard shortcuts.
+fn account(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let compact = theme::compact(ui.ctx());
+    let (name, avatar) = app
+        .user
+        .as_ref()
+        .map(|user| {
+            (
+                user.name().to_string(),
+                pick_image(&user.images, app.art_px(28.0)).map(str::to_string),
+            )
+        })
+        .unwrap_or_default();
+    let size = if compact {
+        theme::TOUCH_TARGET
+    } else {
+        AVATAR_SIZE
+    };
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let fill = if response.hovered() {
+            palette.surface_hover
+        } else {
+            palette.surface
+        };
+        ui.painter().circle_filled(rect.center(), 18.0, fill);
+        let inner = egui::Rect::from_center_size(rect.center(), Vec2::splat(28.0));
+        match avatar.as_deref() {
+            Some(url) => super::widgets::paint_cover(
+                ui,
+                &palette,
+                Some(url),
+                inner,
+                14.0,
+                Icon::User,
+                Some(app.backend.art()),
+            ),
+            None => {
+                let initial = name
+                    .chars()
+                    .next()
+                    .unwrap_or('?')
+                    .to_uppercase()
+                    .to_string();
+                ui.painter()
+                    .circle_filled(inner.center(), 14.0, palette.accent);
+                ui.painter().text(
+                    inner.center(),
+                    egui::Align2::CENTER_CENTER,
+                    initial,
+                    theme::bold(13.0),
+                    palette.on_accent,
+                );
+            }
+        }
+    }
+    let response = response.on_hover_text(&name);
+    egui::Popup::menu(&response)
+        .frame(super::widgets::menu_frame(&palette))
+        .align(egui::RectAlign::BOTTOM_END)
+        .show(|ui| {
+            ui.set_width(200.0);
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.add_space(10.0);
+                theme::text(ui, &name, theme::semibold(14.0), palette.text);
+            });
+            if let Some(product) = app.user.as_ref().and_then(|user| user.product.clone()) {
+                ui.horizontal(|ui| {
+                    ui.add_space(10.0);
+                    theme::text(
+                        ui,
+                        capitalize(&product),
+                        theme::regular(12.0),
+                        palette.secondary,
+                    );
+                });
+            }
+            super::widgets::menu_separator(ui, &palette);
+            if super::widgets::menu_item(
+                ui,
+                &palette,
+                Some(Icon::Settings),
+                &gettext(locale, "Settings"),
+            ) {
+                app.actions.push(Action::Open(Page::Settings));
+            }
+            if compact
+                && super::widgets::menu_item(
+                    ui,
+                    &palette,
+                    Some(Icon::SlidersVertical),
+                    &gettext(locale, "Equalizer"),
+                )
+            {
+                app.actions.push(Action::Open(Page::Equalizer));
+            }
+            if !theme::is_ios()
+                && super::widgets::menu_item(
+                    ui,
+                    &palette,
+                    Some(Icon::Info),
+                    &gettext(locale, "Keyboard shortcuts"),
+                )
+            {
+                app.actions
+                    .push(Action::ShowDialog(crate::model::Dialog::Shortcuts));
+            }
+            super::widgets::menu_separator(ui, &palette);
+            if super::widgets::menu_item(
+                ui,
+                &palette,
+                Some(Icon::LogOut),
+                &gettext(locale, "Sign out"),
+            ) {
+                app.actions.push(Action::SignOut);
+            }
+        });
+}
+
+/// The badge that says the app is offline; it reconnects by itself once
+/// the network is back.
+fn offline(app: &App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(ICON_BUTTON_SIZE), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        let fill = if response.hovered() {
+            if palette.dark {
+                egui::Color32::from_rgb(38, 110, 205)
+            } else {
+                egui::Color32::from_rgb(66, 133, 244)
+            }
+        } else if palette.dark {
+            egui::Color32::from_rgb(28, 92, 178)
+        } else {
+            egui::Color32::from_rgb(41, 121, 255)
+        };
+        ui.painter().circle_filled(rect.center(), 14.5, fill);
+        theme::paint_icon(
+            ui,
+            Icon::WifiOff,
+            rect,
+            ICON_BUTTON_ICON,
+            egui::Color32::WHITE,
+        );
+    }
+    response.on_hover_text(gettext(
+        app.locale,
+        "Spotifast is offline. Reconnecting automatically when connection returns.",
+    ));
 }
 
 fn capitalize(text: &str) -> String {

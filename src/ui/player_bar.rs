@@ -44,6 +44,10 @@ pub(crate) fn end_tint_session(ctx: &egui::Context) {
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
+    if theme::compact(ui.ctx()) {
+        mini_bar(app, ui);
+        return;
+    }
     let palette = app.palette;
     let fill = eased_fill(ui.ctx(), palette.panel, app.now_playing_tint());
     egui::Panel::bottom("player-bar")
@@ -118,6 +122,681 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             let transport_right = center.center().x + transport_width() / 2.0;
             extras(app, &mut right_ui, now.as_ref(), transport_right);
         });
+}
+
+/// A child laid over `rect` that centres the one control put in it.
+fn cell(ui: &mut egui::Ui, rect: Rect) -> egui::Ui {
+    ui.new_child(
+        UiBuilder::new()
+            .max_rect(rect)
+            .layout(Layout::centered_and_justified(egui::Direction::LeftToRight)),
+    )
+}
+
+/// The compact layout's player bar, a phone's: the cover and the song, the
+/// devices and play buttons, and along its foot how far the song has got.
+/// A tap anywhere else on it opens the playing song's own view.
+fn mini_bar(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let fill = eased_fill(ui.ctx(), palette.panel, app.now_playing_tint());
+    // The home indicator's band below the bar takes the bar's colour.
+    if let Some(band) = super::home_indicator_band(ui.ctx()) {
+        super::fill_band(ui, band, fill);
+    }
+    egui::Panel::bottom("player-bar")
+        .exact_size(theme::MINI_BAR_HEIGHT)
+        .resizable(false)
+        .show_separator_line(false)
+        .frame(
+            Frame::new()
+                .fill(fill)
+                .inner_margin(Margin::symmetric(12, 0)),
+        )
+        .show(ui, |ui| {
+            let rect = ui.max_rect();
+            let now = app.now_playing();
+            let behind = rect.expand2(vec2(12.0, 0.0));
+            if visualizer(app, ui, behind, now.as_ref()) {
+                theme::visualiser_frame(ui.ctx(), app.visualiser_fps());
+            }
+            ui.painter().hline(
+                behind.x_range(),
+                rect.top() + 0.5,
+                egui::Stroke::new(1.0, palette.outline),
+            );
+            // Taken first, so the buttons drawn over it keep their own taps.
+            let open = ui.interact(behind, ui.id().with("mini-bar"), Sense::click());
+            open.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Button,
+                    ui.is_enabled(),
+                    gettext(locale, "Now playing"),
+                )
+            });
+            if open.clicked() {
+                super::set_now_playing_open(ui.ctx(), true);
+            }
+            let cy = rect.center().y;
+            let cover = Rect::from_center_size(pos2(rect.left() + 22.0, cy), Vec2::splat(44.0));
+            let play = Rect::from_center_size(
+                pos2(rect.right() - theme::TOUCH_TARGET / 2.0, cy),
+                Vec2::splat(theme::TOUCH_TARGET),
+            );
+            let devices = play.translate(vec2(-theme::TOUCH_TARGET - 4.0, 0.0));
+            let text = Rect::from_min_max(
+                pos2(cover.right() + 10.0, cy - 18.0),
+                pos2(devices.left() - 6.0, cy + 18.0),
+            );
+            let mut words = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(text)
+                    .layout(Layout::top_down(Align::Min)),
+            );
+            words.set_clip_rect(text.intersect(ui.clip_rect()));
+            words.spacing_mut().item_spacing.y = 2.0;
+            match &now {
+                Some(now) => {
+                    super::widgets::playing_cover(
+                        ui,
+                        &palette,
+                        app.backend.art(),
+                        "player-bar",
+                        app.small_art(now, cover.width()),
+                        cover,
+                        6.0,
+                    );
+                    theme::text(&mut words, &now.title, theme::medium(14.0), palette.text);
+                    theme::text(
+                        &mut words,
+                        &now.subtitle,
+                        theme::regular(12.0),
+                        palette.secondary,
+                    );
+                }
+                None => {
+                    super::widgets::paint_cover(ui, &palette, None, cover, 6.0, Icon::Music, None);
+                    theme::text(
+                        &mut words,
+                        gettext(locale, "Nothing playing"),
+                        theme::medium(14.0),
+                        palette.secondary,
+                    );
+                    theme::text(
+                        &mut words,
+                        gettext(locale, "Pick a song, album, or playlist"),
+                        theme::regular(12.0),
+                        palette.dim,
+                    );
+                }
+            }
+            devices_button(app, &mut cell(ui, devices), now.as_ref(), 20.0);
+            play_button(app, &mut cell(ui, play), now.as_ref(), 24.0);
+            // How far the song has got, along the bar's foot.
+            if let Some(now) = &now
+                && now.duration_ms > 0
+            {
+                let played = (now.position_ms as f32 / now.duration_ms as f32).clamp(0.0, 1.0);
+                let line = Rect::from_min_size(
+                    pos2(behind.left(), rect.bottom() - 2.0),
+                    vec2(behind.width(), 2.0),
+                );
+                ui.painter()
+                    .rect_filled(line, 0.0, palette.text.gamma_multiply(0.15));
+                ui.painter().rect_filled(
+                    Rect::from_min_size(line.min, vec2(line.width() * played, 2.0)),
+                    0.0,
+                    palette.text,
+                );
+            }
+        });
+}
+
+/// The button that opens the devices list, with the playing device's own
+/// icon while the music plays elsewhere. The list opens beside it.
+fn devices_button(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, size: f32) {
+    let palette = app.palette;
+    let remote = now.is_some_and(|now| !now.local);
+    let icon = now
+        .filter(|now| !now.local)
+        .and_then(|now| now.device_kind.as_deref())
+        .map_or(Icon::Speaker, super::devices::device_icon);
+    let color = if remote {
+        palette.accent
+    } else {
+        palette.secondary
+    };
+    let devices = theme::icon_button(
+        ui,
+        icon,
+        size,
+        color,
+        palette.text,
+        &gettext(app.locale, "Connect to a device"),
+    );
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(egui::Id::new(super::devices::BUTTON_RECT_ID), devices.rect)
+    });
+    if devices.clicked() {
+        app.actions.push(Action::ToggleDevicesPopup);
+    }
+}
+
+/// Play or pause, as a bare glyph; the spinner while Spotify catches up.
+fn play_button(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, size: f32) {
+    let palette = app.palette;
+    if now.is_some_and(|now| now.loading) || app.any_play_pending() {
+        theme::spinner(ui, size, palette.text);
+        return;
+    }
+    let playing = now.is_some_and(|now| now.playing);
+    let (icon, label) = if playing {
+        (Icon::PauseFilled, gettext(app.locale, "Pause"))
+    } else {
+        (Icon::PlayFilled, gettext(app.locale, "Play"))
+    };
+    if theme::icon_button(ui, icon, size, palette.text, palette.text, &label).clicked() {
+        app.actions.push(Action::TogglePlay);
+    }
+}
+
+/// What the compact layout's view of the playing song keeps clear below the
+/// cover: the song's name, where it has got to, the transport, and the rows
+/// of controls under it, with the gaps between them.
+const NOW_PLAYING_BELOW_COVER: f32 = 390.0;
+
+/// The playing song's own view in the compact layout, which the player bar
+/// opens: the cover large, the song, where it has got to, the transport,
+/// and the controls the desktop's player bar keeps at its right end, the
+/// equalizer among them.
+pub fn now_playing(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let tint = app.now_playing_tint();
+    let top = tint.map_or(palette.panel, |tint| {
+        super::blend(palette.panel, tint, 0.35)
+    });
+    // The status bar's band above takes the colour the view starts with.
+    if let Some(band) = super::status_bar_band(ui.ctx()) {
+        super::fill_band(ui, band, top);
+    }
+    egui::CentralPanel::default()
+        .frame(
+            Frame::new()
+                .fill(palette.panel)
+                .inner_margin(Margin::symmetric(20, 0)),
+        )
+        .show(ui, |ui| {
+            let outer = ui.max_rect().expand2(vec2(20.0, 0.0));
+            super::widgets::paint_vertical_gradient(ui, outer, top, palette.panel);
+            ui.add_space(theme::titlebar_inset(ui.ctx()));
+            let now = app.now_playing();
+            now_playing_header(app, ui);
+            let room = ui.available_rect_before_wrap();
+            egui::ScrollArea::vertical()
+                .id_salt("now-playing-scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let width = ui.available_width();
+                    let below = room.height() - NOW_PLAYING_BELOW_COVER;
+                    let side = width.min(below).clamp(120.0, 420.0);
+                    ui.add_space(8.0);
+                    let (row, _) = ui.allocate_exact_size(vec2(width, side), Sense::hover());
+                    let cover = Rect::from_center_size(row.center(), Vec2::splat(side));
+                    match &now {
+                        Some(now) => super::widgets::playing_cover(
+                            ui,
+                            &palette,
+                            app.backend.art(),
+                            "now-playing",
+                            app.small_art(now, side),
+                            cover,
+                            8.0,
+                        ),
+                        None => super::widgets::paint_cover(
+                            ui,
+                            &palette,
+                            None,
+                            cover,
+                            8.0,
+                            Icon::Music,
+                            None,
+                        ),
+                    }
+                    ui.add_space(16.0);
+                    now_playing_song(app, ui, now.as_ref());
+                    ui.add_space(8.0);
+                    now_playing_progress(app, ui, now.as_ref());
+                    now_playing_transport(app, ui, now.as_ref());
+                    ui.add_space(4.0);
+                    now_playing_extras(app, ui, now.as_ref());
+                    ui.add_space(4.0);
+                    now_playing_volume(app, ui, now.as_ref());
+                    ui.add_space(12.0);
+                });
+        });
+}
+
+/// The view's header: down to close it, what it is, and the song's menu.
+fn now_playing_header(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let width = ui.available_width();
+    let (header, _) = ui.allocate_exact_size(vec2(width, theme::TOUCH_TARGET), Sense::hover());
+    let close = Rect::from_min_size(header.min, Vec2::splat(theme::TOUCH_TARGET));
+    if theme::icon_button(
+        &mut cell(ui, close),
+        Icon::ChevronDown,
+        22.0,
+        palette.secondary,
+        palette.text,
+        &gettext(locale, "Close"),
+    )
+    .clicked()
+    {
+        super::set_now_playing_open(ui.ctx(), false);
+    }
+    ui.painter().text(
+        header.center(),
+        egui::Align2::CENTER_CENTER,
+        gettext(locale, "Now playing"),
+        theme::semibold(14.0),
+        palette.text,
+    );
+    if let Some(item) = app.now_playing_item() {
+        let more = Rect::from_min_size(
+            pos2(header.right() - theme::TOUCH_TARGET, header.top()),
+            Vec2::splat(theme::TOUCH_TARGET),
+        );
+        let more = theme::icon_button(
+            &mut cell(ui, more),
+            Icon::Ellipsis,
+            22.0,
+            palette.secondary,
+            palette.text,
+            &gettext(locale, "More"),
+        );
+        let context = app.editable_context_playlist();
+        egui::Popup::menu(&more)
+            .frame(super::widgets::menu_frame(&palette))
+            .show(|ui| super::widgets::item_menu(ui, app, &item, context.as_ref(), None));
+    }
+}
+
+/// The song's name, which opens its album, its artists, and its heart.
+fn now_playing_song(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let width = ui.available_width();
+    let (row, _) = ui.allocate_exact_size(vec2(width, 52.0), Sense::hover());
+    let heart = Rect::from_min_size(
+        pos2(row.right() - theme::TOUCH_TARGET, row.center().y - 22.0),
+        Vec2::splat(theme::TOUCH_TARGET),
+    );
+    let words = Rect::from_min_max(row.min, pos2(heart.left() - 8.0, row.bottom()));
+    let mut words_ui = ui.new_child(
+        UiBuilder::new()
+            .max_rect(words)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    words_ui.set_clip_rect(words.intersect(ui.clip_rect()));
+    words_ui.spacing_mut().item_spacing.y = 4.0;
+    // Lines of words, not a row of finger-sized controls.
+    words_ui.spacing_mut().interact_size.y = 18.0;
+    let Some(now) = now else {
+        theme::text(
+            &mut words_ui,
+            gettext(locale, "Nothing playing"),
+            theme::bold(20.0),
+            palette.secondary,
+        );
+        theme::text(
+            &mut words_ui,
+            gettext(locale, "Pick a song, album, or playlist"),
+            theme::regular(15.0),
+            palette.dim,
+        );
+        return;
+    };
+    if theme::link(&mut words_ui, &now.title, theme::bold(20.0), palette.text).clicked() {
+        if let Some(id) = &now.album_id {
+            app.actions.push(Action::Open(Page::Album(id.clone())));
+        } else if let Some(id) = &now.show_id {
+            app.actions.push(Action::Open(Page::Show(id.clone())));
+        }
+    }
+    words_ui.horizontal(|ui| {
+        if now.artists.is_empty() {
+            let show = theme::link(ui, &now.subtitle, theme::regular(15.0), palette.secondary);
+            if show.clicked()
+                && let Some(id) = &now.show_id
+            {
+                app.actions.push(Action::Open(Page::Show(id.clone())));
+            }
+        } else {
+            super::widgets::artist_links(
+                ui,
+                app,
+                &now.artists,
+                theme::regular(15.0),
+                palette.secondary,
+            );
+        }
+    });
+    if !now.is_episode {
+        let saved = app.is_saved(&now.uri).unwrap_or(false);
+        let (icon, color, tooltip) = if saved {
+            (
+                Icon::HeartFilled,
+                palette.accent,
+                gettext(locale, "Remove from Liked Songs"),
+            )
+        } else {
+            (
+                Icon::Heart,
+                palette.secondary,
+                gettext(locale, "Save to Liked Songs"),
+            )
+        };
+        if theme::icon_button(&mut cell(ui, heart), icon, 24.0, color, color, &tooltip).clicked() {
+            app.actions.push(Action::ToggleSaved(now.uri.clone()));
+        }
+    }
+}
+
+/// The seek slider across the view, with the time played and the length
+/// under its ends.
+fn now_playing_progress(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>) {
+    let palette = app.palette;
+    let width = ui.available_width();
+    let (position, duration) = now
+        .map(|now| (now.position_ms, now.duration_ms))
+        .unwrap_or((0, 0));
+    let fraction = if duration > 0 {
+        position as f32 / duration as f32
+    } else {
+        0.0
+    };
+    match thin_slider(
+        ui,
+        &palette,
+        egui::Id::new("seek-slider"),
+        &gettext(app.locale, "Playback position (%)"),
+        fraction,
+        width,
+        None,
+    ) {
+        SliderEvent::Dragging(value) => app.seek_preview = Some(value),
+        SliderEvent::Committed(value) => {
+            app.seek_preview = None;
+            if duration > 0 {
+                app.actions
+                    .push(Action::Seek((value * duration as f32) as u32));
+            }
+        }
+        SliderEvent::None => {}
+    }
+    let shown = match app.seek_preview {
+        Some(fraction) => (fraction * duration as f32) as u32,
+        None => position,
+    };
+    let color = if now.is_some() {
+        palette.secondary
+    } else {
+        palette.dim
+    };
+    let (times, _) = ui.allocate_exact_size(vec2(width, 16.0), Sense::hover());
+    ui.painter().text(
+        times.left_center(),
+        egui::Align2::LEFT_CENTER,
+        util::format_duration_ms(shown),
+        theme::regular(11.5),
+        color,
+    );
+    ui.painter().text(
+        times.right_center(),
+        egui::Align2::RIGHT_CENTER,
+        util::format_duration_ms(duration),
+        theme::regular(11.5),
+        color,
+    );
+}
+
+/// Shuffle, previous, play, next and repeat, spread across the view.
+fn now_playing_transport(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let enabled = now.is_some_and(|now| now.can_control) || app.is_connected();
+    let shuffle = now.map_or_else(|| app.playing_context_shuffle(), |now| now.shuffle);
+    let repeat = now.map(|now| now.repeat).unwrap_or_default();
+    let dim = if enabled {
+        palette.secondary
+    } else {
+        palette.dim
+    };
+    let width = ui.available_width();
+    let (row, _) = ui.allocate_exact_size(vec2(width, 80.0), Sense::hover());
+    let slot = row.width() / 5.0;
+    let at = |index: usize, side: f32| {
+        Rect::from_center_size(
+            pos2(row.left() + slot * (index as f32 + 0.5), row.center().y),
+            Vec2::splat(side),
+        )
+    };
+    let shuffle_color = if shuffle { palette.accent } else { dim };
+    let shuffle_button = theme::icon_button(
+        &mut cell(ui, at(0, theme::TOUCH_TARGET)),
+        Icon::Shuffle,
+        20.0,
+        shuffle_color,
+        shuffle_color,
+        &gettext(locale, "Shuffle"),
+    );
+    shuffle_button.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Checkbox,
+            enabled,
+            shuffle,
+            gettext(locale, "Shuffle"),
+        )
+    });
+    if shuffle_button.clicked() {
+        app.actions.push(Action::ToggleShuffle);
+    }
+    if theme::icon_button(
+        &mut cell(ui, at(1, theme::TOUCH_TARGET)),
+        Icon::SkipBackFilled,
+        26.0,
+        dim,
+        palette.text,
+        &gettext(locale, "Previous"),
+    )
+    .clicked()
+    {
+        app.actions.push(Action::Previous);
+    }
+    let disc = at(2, 64.0);
+    if now.is_some_and(|now| now.loading) || app.any_play_pending() {
+        ui.painter()
+            .circle_filled(disc.center(), 32.0, palette.text);
+        theme::spinner(&mut cell(ui, disc), 30.0, palette.window);
+    } else {
+        let playing = now.is_some_and(|now| now.playing);
+        let (icon, label) = if playing {
+            (Icon::PauseFilled, gettext(locale, "Pause"))
+        } else {
+            (Icon::PlayFilled, gettext(locale, "Play"))
+        };
+        if theme::circle_button(
+            &mut cell(ui, disc),
+            icon,
+            64.0,
+            palette.text,
+            palette.text,
+            palette.window,
+            &label,
+        )
+        .clicked()
+        {
+            app.actions.push(Action::TogglePlay);
+        }
+    }
+    if theme::icon_button(
+        &mut cell(ui, at(3, theme::TOUCH_TARGET)),
+        Icon::SkipForwardFilled,
+        26.0,
+        dim,
+        palette.text,
+        &gettext(locale, "Next"),
+    )
+    .clicked()
+    {
+        app.actions.push(Action::Next);
+    }
+    let (repeat_icon, repeat_color, tooltip) = match repeat {
+        RepeatMode::Off => (Icon::Repeat, dim, gettext(locale, "Repeat")),
+        RepeatMode::Context => (Icon::Repeat, palette.accent, gettext(locale, "Repeat one")),
+        RepeatMode::Track => (Icon::Repeat1, palette.accent, gettext(locale, "Repeat off")),
+    };
+    if theme::icon_button(
+        &mut cell(ui, at(4, theme::TOUCH_TARGET)),
+        repeat_icon,
+        20.0,
+        repeat_color,
+        repeat_color,
+        &tooltip,
+    )
+    .clicked()
+    {
+        app.actions.push(Action::CycleRepeat);
+    }
+}
+
+/// The devices, the lyrics, the queue, what friends are playing, and the
+/// equalizer, which on a phone has no Winamp window to live in.
+fn now_playing_extras(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let lit = |on: bool| {
+        if on {
+            palette.accent
+        } else {
+            palette.secondary
+        }
+    };
+    let queue_open = app.show_queue_panel || matches!(app.page(), Page::Queue);
+    let buttons = [
+        (
+            Icon::Mic,
+            lit(app.show_lyrics_panel),
+            gettext(locale, "Lyrics"),
+            Action::ToggleLyricsPanel,
+        ),
+        (
+            Icon::ListVideo,
+            lit(queue_open),
+            gettext(locale, "Queue"),
+            Action::ToggleQueuePanel,
+        ),
+        (
+            Icon::Users,
+            lit(app.show_friends_panel),
+            gettext(locale, "Listening activity"),
+            Action::ToggleFriendsPanel,
+        ),
+        (
+            Icon::SlidersVertical,
+            lit(app.settings.eq_on),
+            gettext(locale, "Equalizer"),
+            Action::Open(Page::Equalizer),
+        ),
+    ];
+    // The devices first, then the rest, spread evenly across the row.
+    let width = ui.available_width();
+    let (row, _) = ui.allocate_exact_size(vec2(width, 52.0), Sense::hover());
+    let slot = row.width() / (buttons.len() + 1) as f32;
+    let at = |index: usize| {
+        Rect::from_center_size(
+            pos2(row.left() + slot * (index as f32 + 0.5), row.center().y),
+            Vec2::splat(theme::TOUCH_TARGET),
+        )
+    };
+    devices_button(app, &mut cell(ui, at(0)), now, 20.0);
+    for (index, (icon, color, label, action)) in buttons.into_iter().enumerate() {
+        if theme::icon_button(
+            &mut cell(ui, at(index + 1)),
+            icon,
+            20.0,
+            color,
+            palette.text,
+            &label,
+        )
+        .clicked()
+        {
+            app.actions.push(action);
+        }
+    }
+}
+
+/// The volume, with the button that mutes it, across the view.
+fn now_playing_volume(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let volume = now
+        .map(|now| now.volume_percent)
+        .unwrap_or_else(|| crate::app::volume_to_percent(app.local.volume));
+    let shown = match app.volume_preview {
+        Some(fraction) => (fraction * 100.0).round() as u8,
+        None => volume,
+    };
+    // Some remote devices refuse volume changes from other apps: their
+    // volume shows but cannot be changed.
+    let adjustable = now.is_none_or(|now| now.can_set_volume);
+    ui.add_enabled_ui(adjustable, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let icon = match shown {
+                0 => Icon::VolumeX,
+                1..=33 => Icon::Volume,
+                34..=66 => Icon::Volume1,
+                _ => Icon::Volume2,
+            };
+            let label = if shown == 0 {
+                gettext(locale, "Unmute")
+            } else {
+                gettext(locale, "Mute")
+            };
+            if theme::icon_button(ui, icon, 20.0, palette.secondary, palette.text, &label).clicked()
+            {
+                app.actions.push(Action::ToggleMute);
+            }
+            let width = ui.available_width();
+            match thin_slider(
+                ui,
+                &palette,
+                egui::Id::new("volume-slider"),
+                &gettext(locale, "Volume (%)"),
+                shown as f32 / 100.0,
+                width,
+                Some(0.05),
+            ) {
+                SliderEvent::Dragging(value) => {
+                    app.volume_preview = Some(value);
+                    // Local volume is cheap to apply continuously; remote
+                    // goes on release.
+                    if now.is_none_or(|now| now.local) {
+                        app.actions
+                            .push(Action::PreviewVolume((value * 100.0).round() as u8));
+                    }
+                }
+                SliderEvent::Committed(value) => {
+                    app.volume_preview = None;
+                    app.actions
+                        .push(Action::SetVolume((value * 100.0).round() as u8));
+                }
+                SliderEvent::None => {}
+            }
+        });
+    });
 }
 
 /// Draws the chosen spectrum or waveform of the song playing on this

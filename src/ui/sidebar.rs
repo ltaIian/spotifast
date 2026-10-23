@@ -12,6 +12,17 @@ use crate::theme::{self, Icon, Palette};
 const DEFAULT_ROW_HEIGHT: f32 = 60.0;
 const COMPACT_ROW_HEIGHT: f32 = 32.0;
 
+/// What a library row or card senses. A finger's swipe over the library
+/// scrolls it rather than picking up a playlist, so on a touch screen they
+/// only take taps.
+fn row_sense(ctx: &egui::Context) -> Sense {
+    if theme::touch(ctx) {
+        Sense::click()
+    } else {
+        Sense::click_and_drag()
+    }
+}
+
 struct Entry {
     image: Option<String>,
     grid_image: Option<String>,
@@ -90,6 +101,28 @@ fn cover_play_button(
         Sense::click(),
     );
     let play_hover = play.hovered();
+    let touch = theme::touch(ui.ctx());
+    if touch && !play_hover && !parent.hovered() {
+        // Without hover the control shows as a small disc in the corner.
+        let disc = Rect::from_center_size(
+            cover_rect.right_bottom() - Vec2::splat(10.0),
+            Vec2::splat(18.0),
+        );
+        ui.painter()
+            .circle_filled(disc.center(), 9.0, egui::Color32::from_black_alpha(150));
+        let icon = if playing {
+            Icon::PauseFilled
+        } else {
+            Icon::PlayFilled
+        };
+        icon.image(egui::Color32::WHITE, 9.0).paint_at(
+            ui,
+            Rect::from_center_size(
+                disc.center() + theme::play_glyph_offset(icon, 9.0),
+                Vec2::splat(9.0),
+            ),
+        );
+    }
     if play_hover || parent.hovered() {
         let radius = if entry.round {
             (cover_rect.width() / 2.0).min(127.0) as u8
@@ -180,7 +213,8 @@ fn grid_play_button(
     button.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label.clone())
     });
-    if parent.hovered() || playing_here || button.has_focus() {
+    // A finger cannot hover, so on a touch screen the disc stays.
+    if parent.hovered() || playing_here || button.has_focus() || theme::touch(ui.ctx()) {
         let fill = if button.hovered() {
             app.palette.accent_hover
         } else {
@@ -553,15 +587,21 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     } else {
         0.0
     };
-    let fit = super::yielding_panel(
-        ui.ctx(),
-        "sidebar",
-        super::SIDEBAR_MIN_WIDTH..=600.0,
-        app.settings.sidebar_width,
-        ui.available_width() - super::topbar::least_width(ui.ctx()) - beside,
-    );
+    // On a phone the library takes the whole screen, over the page.
+    let compact = theme::compact(ui.ctx());
+    let fit = if compact {
+        super::full_width(ui)
+    } else {
+        super::yielding_panel(
+            ui.ctx(),
+            "sidebar",
+            super::SIDEBAR_MIN_WIDTH..=600.0,
+            app.settings.sidebar_width,
+            ui.available_width() - super::topbar::least_width(ui.ctx()) - beside,
+        )
+    };
     let panel = egui::Panel::left("sidebar")
-        .resizable(true)
+        .resizable(!compact)
         .default_size(app.settings.sidebar_width)
         .size_range(fit.range.clone())
         .show_separator_line(false)
@@ -929,7 +969,13 @@ fn nav_row(
     label: &str,
     active: bool,
 ) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
+    let height = if theme::touch(ui.ctx()) {
+        theme::TOUCH_TARGET
+    } else {
+        40.0
+    };
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
     if ui.is_rect_visible(rect) {
         let color = if active || response.hovered() {
             palette.text
@@ -1014,14 +1060,20 @@ fn contents(app: &mut App, ui: &mut egui::Ui, grid_art: Option<Rect>) {
                 16.0,
                 palette.secondary,
                 palette.text,
-                super::keys::platform_shortcut(
+                super::keys::hint(super::keys::platform_shortcut(
                     &gettext(locale, "Hide sidebar (Ctrl+B)"),
                     &gettext(locale, "Hide sidebar (Cmd+B)"),
-                ),
+                )),
             )
             .clicked()
             {
-                app.actions.push(Action::ToggleSidebar);
+                // On a phone the library is laid over the page; this takes
+                // it away again.
+                if theme::compact(ui.ctx()) {
+                    super::set_library_open(ui.ctx(), false);
+                } else {
+                    app.actions.push(Action::ToggleSidebar);
+                }
             }
             let grid = app.settings.sidebar_grid;
             let (icon, label) = if grid {
@@ -1362,6 +1414,12 @@ fn contents(app: &mut App, ui: &mut egui::Ui, grid_art: Option<Rect>) {
             } else {
                 DEFAULT_ROW_HEIGHT
             };
+            // A compact row still has to take a finger.
+            let row_height = if theme::touch(ui.ctx()) {
+                row_height.max(theme::TOUCH_TARGET)
+            } else {
+                row_height
+            };
             // Calculate drop positions from fixed row height because rows shift
             // before drawing.
             let list_top = ui.cursor().top();
@@ -1407,7 +1465,7 @@ fn contents(app: &mut App, ui: &mut egui::Ui, grid_art: Option<Rect>) {
                     entry.liked,
                     entry.folder.as_ref().map(|(id, _, _)| id),
                 ));
-                let response = ui.interact(rect, id, Sense::click_and_drag());
+                let response = ui.interact(rect, id, row_sense(ui.ctx()));
                 response.widget_info(|| {
                     egui::WidgetInfo::selected(
                         egui::WidgetType::Button,
@@ -1771,7 +1829,7 @@ fn library_grid(
                     let droppable = entry.liked || entry.editable;
                     let (rect, response) = ui.allocate_exact_size(
                         vec2(layout.card_width, layout.card_height),
-                        Sense::click_and_drag(),
+                        row_sense(ui.ctx()),
                     );
                     response.widget_info(|| {
                         egui::WidgetInfo::selected(

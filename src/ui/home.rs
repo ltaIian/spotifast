@@ -189,6 +189,25 @@ fn quick_access_tiles(app: &App) -> Vec<Tile> {
     tiles
 }
 
+/// A quick access tile's name on up to two lines, centred on the tile's
+/// height and cut with an ellipsis: a phone's tiles are too narrow for most
+/// names on one.
+fn tile_name_lines(ui: &egui::Ui, text_rect: Rect, name: &str, color: egui::Color32) {
+    let painter = ui.painter().with_clip_rect(text_rect);
+    let galley = crate::bidi::layout(
+        &painter,
+        name,
+        theme::bold(14.5),
+        color,
+        text_rect.width(),
+        2,
+        Some(crate::bidi::ELLIPSIS),
+    );
+    let height = galley.size().y;
+    let lines = Rect::from_center_size(text_rect.center(), vec2(text_rect.width(), height));
+    painter.galley(crate::bidi::galley_pos(lines, &galley), galley, color);
+}
+
 fn quick_access(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let tiles = quick_access_tiles(app);
@@ -242,15 +261,19 @@ fn quick_access(app: &mut App, ui: &mut egui::Ui) {
                         pos2(cover.right() + 12.0, rect.top()),
                         pos2(rect.right() - play_room, rect.bottom()),
                     );
-                    crate::bidi::paint_line(
-                        &ui.painter().with_clip_rect(text_rect),
-                        text_rect.left(),
-                        text_rect.right(),
-                        rect.center().y,
-                        name,
-                        theme::bold(14.5),
-                        palette.text,
-                    );
+                    if theme::compact(ui.ctx()) {
+                        tile_name_lines(ui, text_rect, name, palette.text);
+                    } else {
+                        crate::bidi::paint_line(
+                            &ui.painter().with_clip_rect(text_rect),
+                            text_rect.left(),
+                            text_rect.right(),
+                            rect.center().y,
+                            name,
+                            theme::bold(14.5),
+                            palette.text,
+                        );
+                    }
                     if hovered && let Some(uri) = uri {
                         let context_here =
                             app.playing_context_uri().as_deref() == Some(uri.as_str());

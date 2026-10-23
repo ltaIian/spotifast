@@ -127,6 +127,9 @@ pub enum Page {
     Radio(String),
     Queue,
     Settings,
+    /// The equalizer as a page of its own, for the phone layout, which has
+    /// no Winamp skin to hold its window.
+    Equalizer,
 }
 
 impl Page {
@@ -148,6 +151,7 @@ impl Page {
             Page::Radio(seed) => format!("radio:{seed}"),
             Page::Queue => "queue".into(),
             Page::Settings => "settings".into(),
+            Page::Equalizer => "equalizer".into(),
         }
     }
 
@@ -164,6 +168,7 @@ impl Page {
             "episodes" => Page::Episodes,
             "queue" => Page::Queue,
             "settings" => Page::Settings,
+            "equalizer" => Page::Equalizer,
             other => {
                 let (kind, id) = other.split_once(':')?;
                 match kind {

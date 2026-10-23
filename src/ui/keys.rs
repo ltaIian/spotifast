@@ -12,6 +12,31 @@ pub(super) const fn platform_shortcut<'a>(ctrl: &'a str, cmd: &'a str) -> &'a st
     if cfg!(target_os = "macos") { cmd } else { ctrl }
 }
 
+/// A label as shown: on iOS without the keyboard shortcut in parentheses at
+/// its end, since a phone has no keyboard to press it on.
+pub(super) fn hint(label: &str) -> &str {
+    if crate::theme::is_ios() {
+        without_shortcut(label)
+    } else {
+        label
+    }
+}
+
+/// `label` without a trailing parenthesis that holds a key combination,
+/// such as " (Ctrl+B)", or the full-width one some translations use.
+fn without_shortcut(label: &str) -> &str {
+    let trimmed = label.trim_end();
+    for (open, close) in [("(", ")"), ("（", "）")] {
+        if let Some(inner) = trimmed.strip_suffix(close)
+            && let Some(start) = inner.rfind(open)
+            && inner[start + open.len()..].contains('+')
+        {
+            return inner[..start].trim_end();
+        }
+    }
+    label
+}
+
 pub(super) const SIDEBAR_SHORTCUT: &str = platform_shortcut("Ctrl+B", "Cmd+B");
 pub(super) const QUIT_SHORTCUT: &str = platform_shortcut("Ctrl+Q", "Cmd+Q");
 pub(super) const WINAMP_SHORTCUT: &str = platform_shortcut("Ctrl+M", "Cmd+Shift+M");
@@ -55,11 +80,16 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         key(Modifiers::COMMAND, Key::F, Action::FocusSearch);
         key(Modifiers::COMMAND, Key::B, Action::ToggleSidebar);
         key(Modifiers::COMMAND, Key::Comma, Action::Open(Page::Settings));
-        key(Modifiers::COMMAND, Key::Q, Action::Quit);
-        // The platform's close key. macOS only closes a window from its
-        // menu, which winit does not install, and the mini player has no
-        // title bar for the system to close it by.
-        key(Modifiers::COMMAND, Key::W, Action::CloseWindow);
+        // An iPhone app has no window to close and does not quit itself;
+        // nor does it have the Winamp skin or MilkDrop.
+        let windows = !crate::theme::is_ios();
+        if windows {
+            key(Modifiers::COMMAND, Key::Q, Action::Quit);
+            // The platform's close key. macOS only closes a window from its
+            // menu, which winit does not install, and the mini player has no
+            // title bar for the system to close it by.
+            key(Modifiers::COMMAND, Key::W, Action::CloseWindow);
+        }
         // winit installs its own macOS app menu, whose Hide item owns Cmd+H
         // before the window is offered the key.
         if cfg!(target_os = "macos") {
@@ -73,21 +103,23 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         }
         key(Modifiers::COMMAND, Key::L, Action::Open(Page::LikedSongs));
         // Cmd+M minimises on macOS.
-        if cfg!(target_os = "macos") {
+        if windows && cfg!(target_os = "macos") {
             key(
                 Modifiers::COMMAND | Modifiers::SHIFT,
                 Key::M,
                 Action::ToggleWinampWindow,
             );
-        } else {
+        } else if windows {
             key(Modifiers::COMMAND, Key::M, Action::ToggleWinampWindow);
         }
         // Winamp's key for starting and stopping the visualisation plug-in.
-        key(
-            Modifiers::COMMAND | Modifiers::SHIFT,
-            Key::K,
-            Action::ToggleWinampMilkdrop,
-        );
+        if windows {
+            key(
+                Modifiers::COMMAND | Modifiers::SHIFT,
+                Key::K,
+                Action::ToggleWinampMilkdrop,
+            );
+        }
         key(
             Modifiers::COMMAND,
             Key::Slash,
@@ -510,6 +542,21 @@ mod tests {
         for (keys, _) in shortcuts(Locale::English) {
             assert!(!keys.contains(other), "wrong modifier in {keys}");
         }
+    }
+
+    /// On iOS a label loses the shortcut at its end, in either kind of
+    /// parenthesis, and keeps any other parenthesis.
+    #[test]
+    fn a_label_without_its_shortcut() {
+        assert_eq!(without_shortcut("Show sidebar (Ctrl+B)"), "Show sidebar");
+        assert_eq!(without_shortcut("Hide sidebar (Cmd+B) "), "Hide sidebar");
+        assert_eq!(
+            without_shortcut("Biblioteca\u{ff08}Cmd+B\u{ff09}"),
+            "Biblioteca"
+        );
+        assert_eq!(without_shortcut("Library (beta)"), "Library (beta)");
+        assert_eq!(without_shortcut("Home"), "Home");
+        assert_eq!(hint("Show sidebar (Ctrl+B)"), "Show sidebar (Ctrl+B)");
     }
 
     #[test]

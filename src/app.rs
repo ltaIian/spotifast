@@ -1005,7 +1005,7 @@ impl App {
             .last_page
             .as_deref()
             .and_then(Page::decode)
-            .filter(|page| !matches!(page, Page::Settings | Page::Queue))
+            .filter(|page| !matches!(page, Page::Settings | Page::Queue | Page::Equalizer))
             .unwrap_or(Page::Home);
 
         let palette = settings.fixed_palette().unwrap_or_else(Palette::dark);
@@ -2956,7 +2956,7 @@ impl App {
                     self.refresh_queue(true);
                 }
             }
-            Page::Settings => {}
+            Page::Settings | Page::Equalizer => {}
         }
     }
 
@@ -5107,6 +5107,7 @@ impl App {
                 }
             }
             Page::Settings => self.refresh_autostart(),
+            Page::Equalizer => {}
         }
     }
 

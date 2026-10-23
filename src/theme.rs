@@ -242,14 +242,132 @@ pub fn top_bar_height() -> f32 {
 /// macOS hides the titlebar and draws the window content all the way to the
 /// top edge, so whatever sits at the top of the window has to leave room for
 /// the traffic lights. Zero everywhere else, and in fullscreen, where the
-/// buttons are gone.
+/// buttons are gone. A previewed iPhone keeps its safe area instead.
 pub fn titlebar_inset(ctx: &egui::Context) -> f32 {
-    if cfg!(target_os = "macos") && !ctx.input(|input| input.viewport().fullscreen.unwrap_or(false))
+    if cfg!(target_os = "macos")
+        && !is_ios()
+        && !ctx.input(|input| input.viewport().fullscreen.unwrap_or(false))
     {
         28.0
     } else {
         0.0
     }
+}
+
+/// Below this width the interface takes its compact, one-column layout: a
+/// phone's, or a desktop window as narrow as one.
+pub const COMPACT_WIDTH: f32 = 600.0;
+/// The player bar of the compact layout: one row, the cover, the song and
+/// its two most used controls.
+pub const MINI_BAR_HEIGHT: f32 = 64.0;
+/// The least side of a control meant for a finger, Apple's 44 points.
+pub const TOUCH_TARGET: f32 = 44.0;
+
+/// Whether this is the iPhone build, or a desktop demo previewing it
+/// (`--demo-show ios`): the one switch for hiding what iOS does not have.
+pub fn is_ios() -> bool {
+    cfg!(target_os = "ios") || ios_preview()
+}
+
+#[cfg(any(test, feature = "demo"))]
+thread_local! {
+    /// Kept per thread: the thread that draws the window sets it, and a
+    /// test previewing iOS leaves the tests running beside it alone.
+    static IOS_PREVIEW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Draws this thread's windows as the iPhone build would: what iOS does not
+/// have is hidden and, while the window reports no safe area of its own,
+/// [`PREVIEW_INSETS`] are kept clear. For demo screenshots and tests.
+#[cfg(any(test, feature = "demo"))]
+pub fn preview_ios(on: bool) {
+    IOS_PREVIEW.with(|preview| preview.set(on));
+}
+
+#[cfg(any(test, feature = "demo"))]
+fn ios_preview() -> bool {
+    IOS_PREVIEW.with(std::cell::Cell::get)
+}
+
+#[cfg(not(any(test, feature = "demo")))]
+const fn ios_preview() -> bool {
+    false
+}
+
+/// The safe area of a previewed iPhone: the status bar around the Dynamic
+/// Island above and the home indicator below, as an iPhone 14 or 15 reports
+/// them in portrait.
+pub const PREVIEW_INSETS: egui::epaint::MarginF32 = egui::epaint::MarginF32 {
+    left: 0.0,
+    right: 0.0,
+    top: 59.0,
+    bottom: 34.0,
+};
+
+/// Where the interface lays out: the window less what the system draws over
+/// it, a phone's status bar and home indicator. The whole window on a
+/// desktop, where the two are the same.
+pub fn content_rect(ctx: &egui::Context) -> egui::Rect {
+    let rect = ctx.content_rect();
+    if ios_preview() && rect == ctx.viewport_rect() {
+        return rect - PREVIEW_INSETS;
+    }
+    rect
+}
+
+/// Where [`settle_layout`] keeps its answer for the frame being drawn.
+const COMPACT_ID: &str = "compact-layout";
+
+/// Settles the layout of the frame about to be drawn: compact on iOS and in
+/// a window narrower than [`COMPACT_WIDTH`], with egui's own widgets, those
+/// in popups and menus too, sized to match. The main window runs it before
+/// it draws anything, and everything it then draws asks [`compact`] and
+/// [`touch`], so one frame never mixes the two layouts.
+pub fn settle_layout(ctx: &egui::Context) {
+    let compact = is_ios() || content_rect(ctx).width() < COMPACT_WIDTH;
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new(COMPACT_ID), (pass, compact)));
+    let sized_for_touch = ctx.global_style().spacing.interact_size.y >= TOUCH_TARGET;
+    if compact != sized_for_touch {
+        ctx.global_style_mut(|style| {
+            if compact {
+                touch_spacing(&mut style.spacing);
+            } else {
+                pointer_spacing(&mut style.spacing);
+            }
+        });
+    }
+}
+
+/// Whether this frame takes the compact layout, a phone's: always on iOS,
+/// and elsewhere when [`settle_layout`] found the main window that narrow
+/// this frame. What draws outside the main window keeps the desktop's.
+pub fn compact(ctx: &egui::Context) -> bool {
+    let pass = ctx.cumulative_pass_nr();
+    let settled = ctx.data(|data| data.get_temp::<(u64, bool)>(egui::Id::new(COMPACT_ID)));
+    is_ios() || settled.is_some_and(|(at, compact)| at == pass && compact)
+}
+
+/// Whether controls are made for a finger: 44-point targets, and nothing
+/// that only shows under a hovering pointer. The compact layout is a
+/// phone's, so it is the touch layout as well.
+pub fn touch(ctx: &egui::Context) -> bool {
+    compact(ctx)
+}
+
+/// egui's own widgets sized for a pointer, as on every desktop.
+fn pointer_spacing(spacing: &mut egui::style::Spacing) {
+    spacing.button_padding = Vec2::new(12.0, 6.0);
+    spacing.interact_size = Vec2::new(40.0, 28.0);
+    spacing.menu_margin = egui::Margin::same(6);
+}
+
+/// egui's own widgets sized for a finger: 44-point targets, and buttons and
+/// menus with the room around them that a fingertip needs.
+fn touch_spacing(spacing: &mut egui::style::Spacing) {
+    spacing.button_padding = Vec2::new(16.0, 12.0);
+    spacing.interact_size = Vec2::splat(TOUCH_TARGET);
+    spacing.menu_margin = egui::Margin::same(8);
 }
 
 pub fn regular(size: f32) -> egui::FontId {
@@ -384,9 +502,7 @@ fn apply_to_style(style: &mut egui::Style, palette: &Palette) {
     ]
     .into();
     style.spacing.item_spacing = Vec2::new(8.0, 6.0);
-    style.spacing.button_padding = Vec2::new(12.0, 6.0);
-    style.spacing.interact_size = Vec2::new(40.0, 28.0);
-    style.spacing.menu_margin = egui::Margin::same(6);
+    pointer_spacing(&mut style.spacing);
     style.spacing.window_margin = egui::Margin::same(16);
     style.spacing.scroll = egui::style::ScrollStyle {
         bar_width: 8.0,
@@ -500,6 +616,7 @@ fastframe_icons::icons! {
         SkipBackFilled => "skip-back-filled",
         SkipForward => "skip-forward",
         SkipForwardFilled => "skip-forward-filled",
+        SlidersVertical => "sliders-vertical",
         Smartphone => lucide "smartphone",
         Sparkles => "sparkles",
         Speaker => "speaker",
@@ -557,6 +674,22 @@ pub fn focus_ring(ui: &egui::Ui, response: &Response) {
 /// at least `size + ICON_BUTTON_PAD`: in a tighter one, egui clamps the
 /// centered layout to the box's top edge and the glyph lands off-center.
 pub const ICON_BUTTON_PAD: f32 = 12.0;
+/// The padding around an [`icon_button`]'s glyph for a finger: an 18-point
+/// glyph makes a 44-point target.
+pub const TOUCH_ICON_BUTTON_PAD: f32 = 26.0;
+
+/// The side of the square an [`icon_button`] takes. For a finger it grows
+/// towards [`TOUCH_ICON_BUTTON_PAD`] as far as the room it is given allows,
+/// so a button in a fixed box still fits the box.
+pub fn icon_button_edge(ui: &egui::Ui, size: f32) -> f32 {
+    let edge = size + ICON_BUTTON_PAD;
+    if !touch(ui.ctx()) {
+        return edge;
+    }
+    (size + TOUCH_ICON_BUTTON_PAD)
+        .min(ui.available_size().min_elem())
+        .max(edge)
+}
 
 /// A frameless icon control whose colour lifts on hover.
 pub fn icon_button(
@@ -567,7 +700,7 @@ pub fn icon_button(
     hover: Color32,
     tooltip: &str,
 ) -> Response {
-    let edge = size + ICON_BUTTON_PAD;
+    let edge = icon_button_edge(ui, size);
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(edge), Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
@@ -1296,5 +1429,79 @@ mod tests {
             5.0 + interval,
             "after a pause"
         );
+    }
+
+    /// The main window takes the compact layout below 600 points of safe
+    /// area, egui's own widgets take a finger's size with it and give it
+    /// back once the window widens, and no frame inherits the last one's.
+    #[test]
+    fn the_compact_layout_settles_each_frame_below_six_hundred_points() {
+        let ctx = egui::Context::default();
+        apply(&ctx, &Palette::dark());
+        let frame = |width: f32| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 800.0),
+                )),
+                ..Default::default()
+            };
+            let mut seen = (true, false);
+            let mut output = ctx.run_ui(input, |ui| {
+                let before = compact(ui.ctx());
+                settle_layout(ui.ctx());
+                seen = (before, compact(ui.ctx()));
+            });
+            output.textures_delta.clear();
+            assert!(!seen.0, "a frame settles its own layout");
+            (seen.1, ctx.global_style().spacing.interact_size)
+        };
+        let pointer = Vec2::new(40.0, 28.0);
+        assert_eq!(frame(1280.0), (false, pointer));
+        assert_eq!(frame(600.0), (false, pointer));
+        assert_eq!(frame(599.0), (true, Vec2::splat(TOUCH_TARGET)));
+        assert_eq!(frame(1280.0), (false, pointer));
+    }
+
+    /// A previewed iPhone keeps a phone's safe area clear in a window that
+    /// reports none, and keeps the window's own where it reports one.
+    #[test]
+    fn a_previewed_iphone_keeps_a_safe_area() {
+        struct Preview;
+        impl Drop for Preview {
+            fn drop(&mut self) {
+                preview_ios(false);
+            }
+        }
+        let ctx = egui::Context::default();
+        let safe_area = |insets: Option<egui::epaint::MarginF32>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(390.0, 844.0),
+                )),
+                safe_area_insets: insets.map(egui::SafeAreaInsets),
+                ..Default::default()
+            };
+            let mut rect = egui::Rect::NOTHING;
+            let mut output = ctx.run_ui(input, |ui| rect = content_rect(ui.ctx()));
+            output.textures_delta.clear();
+            rect
+        };
+        let whole = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(390.0, 844.0));
+        assert!(!is_ios());
+        assert_eq!(safe_area(None), whole);
+        preview_ios(true);
+        let _preview = Preview;
+        assert!(is_ios());
+        let phone = egui::Rect::from_min_max(egui::pos2(0.0, 59.0), egui::pos2(390.0, 810.0));
+        assert_eq!(safe_area(None), phone);
+        let own = egui::epaint::MarginF32 {
+            top: 47.0,
+            bottom: 34.0,
+            ..Default::default()
+        };
+        let reported = egui::Rect::from_min_max(egui::pos2(0.0, 47.0), egui::pos2(390.0, 810.0));
+        assert_eq!(safe_area(Some(own)), reported);
     }
 }

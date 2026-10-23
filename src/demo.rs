@@ -7704,16 +7704,37 @@ mod tests {
         out
     }
 
-    /// What a frame draws outside `content`, other than plain rectangles:
-    /// the fills behind a phone's status bar and home indicator, and the
-    /// shadows and backdrops that may reach under them.
-    fn painted_outside(output: &egui::FullOutput, content: egui::Rect) -> Vec<String> {
+    /// What a frame on `screen` draws outside `content`. Only three things
+    /// may reach there: plain fills, with no outline and no picture, that
+    /// stay inside the band a phone's status bar or home indicator covers or
+    /// cover the whole screen, as the backdrop behind the safe area does;
+    /// and blurred shadows.
+    fn painted_outside(
+        output: &egui::FullOutput,
+        screen: egui::Rect,
+        content: egui::Rect,
+    ) -> Vec<String> {
+        let top = egui::Rect::from_min_max(screen.min, egui::pos2(screen.right(), content.top()));
+        let bottom =
+            egui::Rect::from_min_max(egui::pos2(screen.left(), content.bottom()), screen.max);
+        let fits = |painted: egui::Rect| {
+            painted.contains_rect(screen.shrink(0.5))
+                || top.expand(0.5).contains_rect(painted)
+                || bottom.expand(0.5).contains_rect(painted)
+        };
+        let allowed = |shape: &egui::Shape, painted: egui::Rect| match shape {
+            egui::Shape::Rect(rect) if rect.blur_width > 0.0 => true,
+            egui::Shape::Rect(rect) => {
+                rect.brush.is_none() && rect.stroke.is_empty() && fits(painted)
+            }
+            _ => false,
+        };
         painted_shapes(output)
             .into_iter()
-            .filter(|(shape, _)| !matches!(shape, egui::Shape::Rect(_)))
             .filter_map(|(shape, clip)| {
                 let painted = shape.visual_bounding_rect().intersect(clip);
-                (painted.is_positive() && !content.expand(0.5).contains_rect(painted))
+                let inside = content.expand(0.5).contains_rect(painted);
+                (painted.is_positive() && !inside && !allowed(&shape, painted))
                     .then(|| format!("{painted:?}: {shape:?}"))
             })
             .collect()
@@ -7721,7 +7742,8 @@ mod tests {
 
     /// On a phone, with the status bar around a Dynamic Island above and
     /// the home indicator below, every page, screen and dialog lays out
-    /// inside the safe area. Only plain fills reach under the bars.
+    /// inside the safe area. Only plain fills reach under the bars, and
+    /// shadows.
     #[test]
     fn every_surface_renders_on_a_phone() {
         // Drawn as the iPhone build, until the test ends however it ends.
@@ -7772,7 +7794,8 @@ mod tests {
             frame_sized(&ctx, app, size, insets);
             let output = frame_sized(&ctx, app, size, insets);
             assert_eq!(ctx.content_rect(), content, "{what}");
-            let outside = painted_outside(&output, content);
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            let outside = painted_outside(&output, screen, content);
             assert!(
                 outside.is_empty(),
                 "{what} draws outside the safe area: {outside:#?}"

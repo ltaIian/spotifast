@@ -26,9 +26,16 @@ use crate::single_instance::ControlCommand;
 use crate::theme::{self, Palette};
 use crate::util;
 use fastframe_now_playing::{
-    Command as MediaCommand, NowPlaying as MediaControls, Playback as MediaPlayback,
-    Repeat as MediaRepeat, State as MediaState, Track as MediaTrack,
+    Command as MediaCommand, Playback as MediaPlayback, Repeat as MediaRepeat, State as MediaState,
+    Track as MediaTrack,
 };
+
+// fastframe's media controls have no iOS backend: there Now Playing and the
+// remote commands go through Swift, behind the same interface.
+#[cfg(target_os = "ios")]
+use crate::ios::now_playing::NowPlaying as MediaControls;
+#[cfg(not(target_os = "ios"))]
+use fastframe_now_playing::NowPlaying as MediaControls;
 
 const REMOTE_POLL_ACTIVE: Duration = Duration::from_secs(4);
 const REMOTE_POLL_IDLE: Duration = Duration::from_secs(20);

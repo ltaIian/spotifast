@@ -8,6 +8,7 @@
 //! fastframe-shell do, for one window that lasts as long as the app.
 
 pub mod auth_sheet;
+pub mod now_playing;
 mod selftest;
 
 use std::cell::RefCell;
@@ -67,9 +68,11 @@ pub fn run() -> ! {
     crate::emoji::install(false);
     let storage = eframe_storage(&dirs);
     let waker = Waker::default();
+    // The media controls are Now Playing and the remote commands, through
+    // Swift (`now_playing`).
     let options = AppOptions {
         restore_sign_in: true,
-        media_controls: false,
+        media_controls: true,
         tray: false,
         autostart: false,
     };

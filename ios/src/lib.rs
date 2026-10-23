@@ -1,6 +1,6 @@
 //! Spotifast's iOS app as a static library: the C functions the Xcode
-//! project's Swift code calls (`ios/Sources/main.swift`), each handing over
-//! to `spotifast::ios`. On any other target the library is empty.
+//! project's Swift code calls (`ios/Sources`), each handing over to
+//! `spotifast::ios`. On any other target the library is empty.
 
 #![cfg(target_os = "ios")]
 
@@ -17,6 +17,15 @@ pub extern "C" fn spotifast_main() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn spotifast_will_background() {
     spotifast::ios::will_background();
+}
+
+
+/// A remote control was used: the lock screen, Control Center or
+/// headphones (the codes are NowPlaying.swift's). Call it on the main
+/// thread.
+#[unsafe(no_mangle)]
+pub extern "C" fn spotifast_ios_command(command: i32, value: f64) {
+    spotifast::ios::now_playing::command(command, value);
 }
 
 /// Saves what quitting would save. Call it when the app is about to

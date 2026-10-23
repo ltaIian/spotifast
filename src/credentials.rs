@@ -261,9 +261,24 @@ struct NativeStore {
     store: Option<Arc<keyring_core::api::CredentialStore>>,
 }
 
+/// iOS: a grant can be read once the phone has been unlocked after a
+/// restart, so the playback grant is there while music plays with the
+/// phone locked (the store's default, only while unlocked, fails then), and
+/// it never leaves this device.
+#[cfg(target_os = "ios")]
+fn ios_entry_modifiers() -> std::collections::HashMap<&'static str, &'static str> {
+    let mut modifiers = std::collections::HashMap::new();
+    modifiers.insert("access-policy", "after-first-unlock-this-device-only");
+    modifiers
+}
+
 impl NativeStore {
     fn entry(&mut self, key: &str) -> Result<keyring_core::Entry, Error> {
-        self.entry_with(key, None)
+        #[cfg(target_os = "ios")]
+        let modifiers = Some(ios_entry_modifiers());
+        #[cfg(not(target_os = "ios"))]
+        let modifiers = None;
+        self.entry_with(key, modifiers.as_ref())
     }
 
     fn entry_with(

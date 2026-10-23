@@ -1,8 +1,12 @@
 //! Ten-band equalizer for local playback.
 //!
 //! Each Winamp band uses a second-order peaking filter. Bands and preamp range
-//! from -12 to +12 dB. The UI writes settings into a cell the player reads
-//! once per packet without a lock, rebuilding filters only after changes.
+//! from -12 to +12 dB.
+//!
+//! The UI writes settings into a cell the player reads once per packet
+//! without a lock, solving the bands again only after a change. A change of
+//! any gain, the switch included, arrives over about 23 ms so that it never
+//! clicks; while the settings shape nothing, no filter runs at all.
 //!
 //! This stage does not clip boosted samples. `vis::Tapped` limits the signal
 //! later, after accounting for output volume.
@@ -18,7 +22,7 @@ pub const BANDS: [f32; 10] = [
 ];
 /// How far a band goes either way, in decibels.
 pub const RANGE_DB: f32 = 12.0;
-/// Bands closer to flat than this are skipped rather than run for nothing.
+/// Bands closer to flat than this count as flat and are left out.
 const FLAT: f32 = 0.05;
 /// How far the solved gains may go past the sliders while making the
 /// combined response meet them; a guard, not a target.
@@ -28,6 +32,18 @@ const SOLVED_LIMIT: f64 = 36.0;
 pub const BASS_BOOST_HZ: f32 = 90.0;
 /// How far the bass boost goes, in decibels; it only ever adds.
 pub const BASS_BOOST_MAX_DB: f32 = 12.0;
+/// Frames a change takes to arrive, about 23 ms: long enough not to click,
+/// short enough to follow a slider.
+const RAMP: usize = 1024;
+/// Frames between new coefficients while a change arrives; the preamp moves
+/// every frame. `RAMP` is a whole number of them.
+const STEP: usize = 32;
+/// Frames the filters keep running once a change has arrived at flat, so
+/// that what they still hold of the sound before dies away (some thirty
+/// time constants of the slowest band) before the samples pass untouched.
+const TAIL: usize = 4096;
+/// The interleaved channels, each with filters of its own.
+const CHANNELS: usize = NUM_CHANNELS as usize;
 
 /// Equalizer, preamp, balance, and mono settings.
 ///
@@ -81,7 +97,7 @@ impl EqSettings {
     pub fn curve(&self) -> Curve {
         Curve {
             preamp_db: self.preamp_db,
-            filters: chain(&self.bands_db),
+            bands: chain(&self.bands_db),
         }
     }
 
@@ -94,13 +110,14 @@ impl EqSettings {
 /// Equalizer response by frequency.
 pub struct Curve {
     preamp_db: f32,
-    filters: Vec<Biquad>,
+    /// Each band's filter, `None` for a band left out.
+    bands: [Option<Biquad>; 10],
 }
 
 impl Curve {
     pub fn db_at(&self, hz: f32) -> f32 {
         let mut db = f64::from(self.preamp_db);
-        for filter in &self.filters {
+        for filter in self.bands.iter().flatten() {
             db += filter.gain_db_at(f64::from(hz));
         }
         db as f32
@@ -113,7 +130,7 @@ impl Curve {
 /// and overboost presets such as Full Treble. The outer bands extend three
 /// octaves below 60 Hz and one octave above 16 kHz, matching Winamp.
 fn band_widths() -> [f64; 10] {
-    let octaves: Vec<f64> = BANDS.iter().map(|hz| f64::from(*hz).log2()).collect();
+    let octaves = BANDS.map(|hz| f64::from(hz).log2());
     let mut widths = [0.0; 10];
     for (index, width) in widths.iter_mut().enumerate() {
         let below = index
@@ -128,30 +145,39 @@ fn band_widths() -> [f64; 10] {
     widths
 }
 
-/// Builds filters whose combined response matches each slider at its centre.
-/// Adjacent filters overlap, so their individual gains are solved together.
-fn chain(bands_db: &[f32; 10]) -> Vec<Biquad> {
+/// Builds filters whose combined response matches each slider at its centre,
+/// `None` for a band left out.
+fn chain(bands_db: &[f32; 10]) -> [Option<Biquad>; 10] {
     let widths = band_widths();
+    filters_for(&solved(bands_db, &widths), &widths)
+}
+
+/// The gain each band's filter is given so that together they meet every
+/// slider at its centre, zero for a band left out. Adjacent filters overlap,
+/// so their individual gains are solved together. It works in arrays only,
+/// so the player's thread can run it without touching the heap.
+fn solved(bands_db: &[f32; 10], widths: &[f64; 10]) -> [f64; 10] {
     let target: [f64; 10] = bands_db.map(f64::from);
     if target.iter().all(|gain| gain.abs() <= f64::from(FLAT)) {
-        return Vec::new();
+        return [0.0; 10];
     }
     // How much each band moves every centre, per decibel it is given.
     let mut unit = [[0.0; 10]; 10];
     for (j, (hz, width)) in BANDS.iter().zip(widths).enumerate() {
-        let filter = Biquad::peaking(f64::from(*hz), width, 1.0);
+        let filter = Biquad::peaking(f64::from(*hz), *width, 1.0);
         for (i, centre) in BANDS.iter().enumerate() {
             unit[i][j] = filter.gain_db_at(f64::from(*centre));
         }
     }
     let mut gains = target;
     for _ in 0..6 {
-        let filters: Vec<(usize, Biquad)> = filters_for(&gains, &widths);
+        let filters = filters_for(&gains, widths);
         let mut residual = [0.0; 10];
         for (i, centre) in BANDS.iter().enumerate() {
             let played: f64 = filters
                 .iter()
-                .map(|(_, filter)| filter.gain_db_at(f64::from(*centre)))
+                .flatten()
+                .map(|filter| filter.gain_db_at(f64::from(*centre)))
                 .sum();
             residual[i] = played - target[i];
         }
@@ -163,22 +189,25 @@ fn chain(bands_db: &[f32; 10]) -> Vec<Biquad> {
             *gain = (*gain - step).clamp(-SOLVED_LIMIT, SOLVED_LIMIT);
         }
     }
-    filters_for(&gains, &widths)
-        .into_iter()
-        .map(|(_, filter)| filter)
-        .collect()
+    for gain in &mut gains {
+        if gain.abs() <= f64::from(FLAT) {
+            *gain = 0.0;
+        }
+    }
+    gains
 }
 
-/// The bands worth running, with the filter for each.
-fn filters_for(gains: &[f64; 10], widths: &[f64; 10]) -> Vec<(usize, Biquad)> {
-    BANDS
-        .iter()
-        .zip(widths)
-        .zip(gains)
-        .enumerate()
-        .filter(|(_, (_, gain))| gain.abs() > f64::from(FLAT))
-        .map(|(index, ((hz, width), gain))| (index, Biquad::peaking(f64::from(*hz), *width, *gain)))
-        .collect()
+/// The filter for each band worth running, `None` for one left out.
+fn filters_for(gains: &[f64; 10], widths: &[f64; 10]) -> [Option<Biquad>; 10] {
+    std::array::from_fn(|band| {
+        let hz = f64::from(BANDS[band]);
+        let gain = gains[band];
+        if gain.abs() > f64::from(FLAT) {
+            Some(Biquad::peaking(hz, widths[band], gain))
+        } else {
+            None
+        }
+    })
 }
 
 /// Gaussian elimination with partial pivoting, for the ten-by-ten
@@ -516,73 +545,258 @@ impl Biquad {
         self.y1 = y;
         y
     }
+
+    /// Takes `to`'s coefficients and keeps this filter's history, so the
+    /// sound carries on through the change.
+    fn retune(&mut self, to: &Self) {
+        self.b0 = to.b0;
+        self.b1 = to.b1;
+        self.b2 = to.b2;
+        self.a1 = to.a1;
+        self.a2 = to.a2;
+    }
+
+    /// Forgets the signal so far.
+    fn clear(&mut self) {
+        self.x1 = 0.0;
+        self.x2 = 0.0;
+        self.y1 = 0.0;
+        self.y2 = 0.0;
+    }
+
+    /// Rounds a history too small to hear down to zero, so a long silence
+    /// never leaves the filter working on subnormal numbers, which are slow
+    /// on some processors.
+    fn flush(&mut self) {
+        for value in [&mut self.x1, &mut self.x2, &mut self.y1, &mut self.y2] {
+            if value.abs() < 1e-30 {
+                *value = 0.0;
+            }
+        }
+    }
 }
 
-/// The filters on the player's thread, rebuilt when the settings change.
+/// A gain in decibels as a factor.
+fn amplitude(db: f64) -> f64 {
+    10f64.powf(db / 20.0)
+}
+
+/// Where the filters are, in decibels: the preamp and the gain each band's
+/// filter is given (solved, zero for a band left out).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Shape {
+    preamp_db: f64,
+    bands_db: [f64; 10],
+}
+
+impl Shape {
+    /// Nothing shaped: every filter plays the sound as it comes.
+    const FLAT: Self = Self {
+        preamp_db: 0.0,
+        bands_db: [0.0; 10],
+    };
+
+    /// What `settings` ask of the filters: nothing while the switch is off.
+    fn of(settings: &EqSettings, widths: &[f64; 10]) -> Self {
+        if !settings.on {
+            return Self::FLAT;
+        }
+        Self {
+            preamp_db: f64::from(settings.preamp_db),
+            bands_db: solved(&settings.bands_db, widths),
+        }
+    }
+
+    /// `progress` of the way from this shape to `to`, each gain moving evenly
+    /// in decibels; all the way at one.
+    fn towards(&self, to: &Self, progress: f64) -> Self {
+        if progress >= 1.0 {
+            return *to;
+        }
+        let mix = |from: f64, end: f64| from + (end - from) * progress;
+        Self {
+            preamp_db: mix(self.preamp_db, to.preamp_db),
+            bands_db: std::array::from_fn(|band| mix(self.bands_db[band], to.bands_db[band])),
+        }
+    }
+}
+
+/// The filters on the player's thread.
+///
+/// Nothing `process` does takes a lock, waits or touches the heap: the
+/// settings come from `SharedEq` without a lock, the filters live in arrays,
+/// and the bands are solved again only when the settings change.
 pub struct Processor {
     shared: SharedEq,
+    /// The settings last read; kept while a read keeps meeting a write.
     applied: EqSettings,
-    /// One chain per channel; a band at flat is left out of the chain.
-    chains: Vec<Vec<Biquad>>,
+    widths: [f64; 10],
+    /// The shape the filters hold, and the change under way: where it set
+    /// out from and is going, the frames left until it arrives, and those
+    /// left until the filters take their next coefficients.
+    now: Shape,
+    from: Shape,
+    to: Shape,
+    ramp: usize,
+    block: usize,
+    /// Frames left before filters that arrived at flat stop running.
+    tail: usize,
+    /// Whether the filters run at all; while not, samples pass untouched.
+    shaping: bool,
+    /// The preamp's gain, and how far it moves each frame.
     gain: f64,
+    gain_step: f64,
+    /// Each channel's band filters.
+    bands: [[Biquad; 10]; CHANNELS],
 }
 
 impl Processor {
     pub fn new(shared: SharedEq) -> Self {
+        let applied = shared.get().clamped();
+        let widths = band_widths();
+        let shape = Shape::of(&applied, &widths);
         let mut processor = Self {
             shared,
-            applied: EqSettings::default(),
-            chains: vec![Vec::new(); NUM_CHANNELS as usize],
-            gain: 1.0,
+            applied,
+            widths,
+            now: shape,
+            from: shape,
+            to: shape,
+            ramp: 0,
+            block: 0,
+            tail: 0,
+            shaping: shape != Shape::FLAT,
+            gain: amplitude(shape.preamp_db),
+            gain_step: 0.0,
+            bands: [[Biquad::default(); 10]; CHANNELS],
         };
-        processor.rebuild();
+        processor.tune(&shape);
         processor
     }
 
-    fn rebuild(&mut self) {
-        let settings = self.applied;
-        self.gain = 10f64.powf(f64::from(settings.preamp_db) / 20.0);
-        self.chains = vec![chain(&settings.bands_db); NUM_CHANNELS as usize];
+    /// Gives every filter the coefficients for `shape`, keeping each one's
+    /// history so the sound carries on.
+    fn tune(&mut self, shape: &Shape) {
+        for (band, (hz, width)) in BANDS.iter().zip(self.widths).enumerate() {
+            let filter = Biquad::peaking(f64::from(*hz), width, shape.bands_db[band]);
+            for channel in &mut self.bands {
+                channel[band].retune(&filter);
+            }
+        }
     }
 
     /// Discards the previous signal without changing the filter settings.
+    /// A change under way arrives at once, with no sound left to carry it.
     pub fn reset(&mut self) {
-        for filter in self.chains.iter_mut().flatten() {
-            filter.x1 = 0.0;
-            filter.x2 = 0.0;
-            filter.y1 = 0.0;
-            filter.y2 = 0.0;
+        if self.ramp > 0 || self.tail > 0 {
+            let to = self.to;
+            self.tune(&to);
+            self.now = to;
+            self.from = to;
+            self.ramp = 0;
+            self.block = 0;
+            self.tail = 0;
+            self.gain = amplitude(to.preamp_db);
+            self.gain_step = 0.0;
+            self.shaping = to != Shape::FLAT;
+        }
+        self.clear();
+    }
+
+    /// Forgets every filter's history.
+    fn clear(&mut self) {
+        for filter in self.bands.iter_mut().flatten() {
+            filter.clear();
+        }
+    }
+
+    /// Reads the settings and, when they ask something new of the filters,
+    /// sets the change off. A read that keeps meeting a write leaves things
+    /// as they were until the next packet.
+    fn follow(&mut self) {
+        let Some(settings) = self.shared.try_get() else {
+            return;
+        };
+        let wanted = settings.clamped();
+        if wanted == self.applied {
+            return;
+        }
+        self.applied = wanted;
+        let to = Shape::of(&wanted, &self.widths);
+        if to == self.to {
+            return;
+        }
+        if !self.shaping {
+            // Flat filters with no history play the sound exactly as it
+            // comes, so they start from there and the change moves them.
+            self.clear();
+            self.tune(&Shape::FLAT);
+            self.now = Shape::FLAT;
+            self.gain = 1.0;
+            self.shaping = true;
+        }
+        self.from = self.now;
+        self.to = to;
+        self.ramp = RAMP;
+        self.block = 0;
+        self.tail = 0;
+    }
+
+    /// Carries the change under way one frame along. At the start of each
+    /// block of `STEP` frames the filters take the coefficients for where
+    /// the change is at the block's end, and the preamp sets off for its
+    /// gain there, a frame's share at a time.
+    fn advance(&mut self) {
+        if self.block == 0 {
+            let block = self.ramp.min(STEP);
+            let progress = (RAMP - self.ramp + block) as f64 / RAMP as f64;
+            let at = self.from.towards(&self.to, progress);
+            self.tune(&at);
+            self.now = at;
+            self.gain_step = (amplitude(at.preamp_db) - self.gain) / block as f64;
+            self.block = block;
+        }
+        self.gain += self.gain_step;
+        self.block -= 1;
+        self.ramp -= 1;
+        if self.ramp == 0 {
+            self.gain = amplitude(self.to.preamp_db);
+            if self.to == Shape::FLAT {
+                self.tail = TAIL;
+            }
+        }
+    }
+
+    /// One frame through the preamp and the bands.
+    fn filter_frame(&mut self, frame: &mut [f64; CHANNELS]) {
+        if self.ramp > 0 {
+            self.advance();
+        } else if self.tail > 0 {
+            self.tail -= 1;
+            self.shaping = self.tail > 0;
+        }
+        let gain = self.gain;
+        for (sample, bands) in frame.iter_mut().zip(&mut self.bands) {
+            let mut y = *sample * gain;
+            for band in bands {
+                y = band.run(y);
+            }
+            *sample = y;
         }
     }
 
     /// Runs interleaved stereo samples through the equalizer, in place.
     pub fn process(&mut self, samples: &mut [f64]) {
-        // A read that keeps meeting a write keeps the settings applied.
-        let wanted = self
-            .shared
-            .try_get()
-            .map(|settings| settings.clamped())
-            .unwrap_or(self.applied);
-        if wanted != self.applied {
-            self.applied = wanted;
-            self.rebuild();
-        }
-        let shaping = self.applied.on && !(self.chains[0].is_empty() && self.gain == 1.0);
+        self.follow();
         let gains = self.applied.channel_gains();
         let placing = self.applied.mono || gains != [1.0, 1.0];
-        if !shaping && !placing {
+        if !self.shaping && !placing {
             return;
         }
-        let channels = self.chains.len();
-        for frame in samples.chunks_exact_mut(channels) {
-            if shaping {
-                for (sample, chain) in frame.iter_mut().zip(self.chains.iter_mut()) {
-                    let mut y = *sample * self.gain;
-                    for filter in chain.iter_mut() {
-                        y = filter.run(y);
-                    }
-                    *sample = y;
-                }
+        let (frames, _) = samples.as_chunks_mut::<CHANNELS>();
+        for frame in frames {
+            if self.shaping {
+                self.filter_frame(frame);
             }
             if self.applied.mono && frame.len() == 2 {
                 let middle = (frame[0] + frame[1]) / 2.0;
@@ -596,6 +810,11 @@ impl Processor {
                 // three notches down, and holding it back here would take
                 // that away for good. See `vis::Tapped`.
                 *sample *= gain;
+            }
+        }
+        if self.shaping {
+            for filter in self.bands.iter_mut().flatten() {
+                filter.flush();
             }
         }
     }
@@ -662,8 +881,11 @@ mod tests {
         processor.process(&mut samples);
         assert_eq!(samples, original);
 
+        // A change arrives over `RAMP` frames, here one packet, so the
+        // packet after it plays the new gain.
         settings.preamp_db = 6.0;
         shared.set(settings);
+        processor.process(&mut original.clone());
         let mut samples = original.clone();
         processor.process(&mut samples);
         let ratio = rms(&samples) / rms(&original);
@@ -671,6 +893,7 @@ mod tests {
 
         settings.preamp_db = -6.0;
         shared.set(settings);
+        processor.process(&mut original.clone());
         let mut samples = original.clone();
         processor.process(&mut samples);
         let ratio = rms(&samples) / rms(&original);
@@ -809,6 +1032,106 @@ mod tests {
                 preset.bands_db.iter().all(|band| band.abs() <= RANGE_DB),
                 "{} leaves the range",
                 preset.name
+            );
+        }
+    }
+
+    /// With the switch on and every slider, the preamp and the bass boost at
+    /// zero, the sound passes bit for bit; and it does again once a boost
+    /// has been taken away and the change has died away.
+    #[test]
+    fn flat_settings_with_the_switch_on_leave_the_sound_untouched() {
+        let flat = EqSettings {
+            on: true,
+            ..EqSettings::default()
+        };
+        let shared = shared();
+        shared.set(flat);
+        let mut processor = Processor::new(shared.clone());
+        let original = tone(440.0, 1024);
+        let mut samples = original.clone();
+        processor.process(&mut samples);
+        assert_eq!(samples, original);
+
+        let mut shaped = flat;
+        shaped.bands_db[0] = 12.0;
+        shared.set(shaped);
+        processor.process(&mut tone(440.0, 4096));
+        shared.set(flat);
+        processor.process(&mut tone(440.0, RAMP + TAIL));
+        let mut samples = original.clone();
+        processor.process(&mut samples);
+        assert_eq!(samples, original, "once the change is over");
+    }
+
+    /// The largest step between neighbouring samples of the left channel.
+    fn largest_step(samples: &[f64]) -> f64 {
+        let left: Vec<f64> = samples.iter().step_by(2).copied().collect();
+        let mut largest = 0.0f64;
+        for pair in left.windows(2) {
+            largest = largest.max((pair[1] - pair[0]).abs());
+        }
+        largest
+    }
+
+    /// A tone played in packets of 1024 frames with the settings changed
+    /// between the eighth and the ninth: the largest step between samples
+    /// before the change, from it until well after it has arrived, and at
+    /// the end.
+    fn steps_across(from: EqSettings, to: EqSettings, hz: f32) -> [f64; 3] {
+        let shared = shared();
+        shared.set(from);
+        let mut processor = Processor::new(shared.clone());
+        let mut samples = tone(hz, 24 * 1024);
+        for (packet, frames) in samples.chunks_mut(2 * 1024).enumerate() {
+            if packet == 8 {
+                shared.set(to);
+            }
+            processor.process(frames);
+        }
+        let change = 2 * 8 * 1024;
+        let end = samples.len();
+        [
+            largest_step(&samples[change - 2 * 4096..change]),
+            largest_step(&samples[change - 2..change + 2 * (RAMP + TAIL + 1024)]),
+            largest_step(&samples[end - 2 * 4096..]),
+        ]
+    }
+
+    /// Moving the preamp or a band, or turning the switch either way,
+    /// mid-stream never steps from one sample to the next by more than the
+    /// tone does on its own before or after: no click.
+    #[test]
+    fn a_change_mid_stream_does_not_click() {
+        let on = EqSettings {
+            on: true,
+            ..EqSettings::default()
+        };
+        let mut louder = on;
+        louder.preamp_db = 12.0;
+        let mut quieter = on;
+        quieter.preamp_db = -12.0;
+        let mut band = on;
+        band.bands_db[4] = 12.0; // 1 kHz
+        let mut loud = on;
+        loud.preamp_db = 6.0;
+        loud.bands_db[0] = 12.0;
+        let mut off = loud;
+        off.on = false;
+        let changes = [
+            ("the preamp up", on, louder, 1000.0),
+            ("the preamp down", on, quieter, 1000.0),
+            ("a band", on, band, 1000.0),
+            ("the switch off", loud, off, 1000.0),
+            ("the switch off", loud, off, 40.0),
+            ("the switch on", off, loud, 1000.0),
+            ("the switch on", off, loud, 40.0),
+        ];
+        for (change, from, to, hz) in changes {
+            let [before, across, after] = steps_across(from, to, hz);
+            assert!(
+                across <= 1.25 * before.max(after),
+                "{change} at {hz} Hz steps {across:.4}, the tone {before:.4} and {after:.4}"
             );
         }
     }

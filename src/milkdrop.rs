@@ -20,7 +20,9 @@ pub mod engine;
 /// The app's side of the child process: spawning it and talking to it.
 #[cfg(feature = "milkdrop")]
 pub mod host;
-/// Fading text over the picture: the keys, the playing song.
+/// Fading text over the picture: the keys, the playing song. It draws with
+/// eframe's OpenGL, which the iOS build, drawing with wgpu, does not have.
+#[cfg(not(target_os = "ios"))]
 pub mod overlay;
 /// The shared-memory audio ring between the app and the MilkDrop child.
 #[cfg(feature = "milkdrop")]

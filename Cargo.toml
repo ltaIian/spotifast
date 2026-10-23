@@ -28,10 +28,10 @@ log = "0.4"
 # One protected-store API, with only each target's native provider below.
 # Durable Spotify grants must not be copied into ordinary state JSON.
 keyring-core = "1"
-# The whole UI. glow keeps the binary and the dependency tree small; wgpu is
-# not needed for a 2D music client.
+# The whole UI, with the renderer each target draws with in the target
+# tables below.
 # AccessKit connects egui's control names, states, and actions to native screen readers.
-eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "glow", "default_fonts", "links", "wayland", "x11", "persistence"] }
+eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "default_fonts", "links", "persistence"] }
 egui = "0.36.2"
 egui_extras = { version = "0.36.2", features = ["image", "svg"] }
 # The shared foundation of Spotifast, ZapFast, RekordFlash and TonePush
@@ -54,12 +54,7 @@ fastframe-log = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0" }
 # StatusNotifier on Linux, the notification area on Windows, the menu bar
 # on macOS.
 fastframe-tray = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0" }
-# Keeps the app running without a window around eframe::run_native.
-fastframe-shell = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0" }
-# The title bar the app draws itself: the header drag and double-click on
-# every platform, and on Windows and Linux the caption buttons and resizable
-# edges when the listener turns the platform's frame off.
-fastframe-titlebar = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0" }
+# fastframe-shell and fastframe-titlebar are in the desktop table below.
 # Self-update from GitHub releases, on the reqwest client below.
 fastframe-update = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0", features = ["reqwest"] }
 # Settings, the session, the history, caches and the credential markers
@@ -170,8 +165,6 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
 ring = "0.17"
 base64 = "0.22"
-# Native asynchronous file selection on macOS, Windows and Linux desktop portals.
-rfd = "0.17.2"
 rand = "0.9"
 open = "5"
 percent-encoding = "2"
@@ -218,6 +211,34 @@ zbus = { version = "5", default-features = false, features = ["tokio"] }
 # (src/window.rs), which winit only offers on Windows. winit already
 # compiles this version.
 x11rb = { version = "0.13", default-features = false }
+
+# Every target but iOS: what does not build for iOS.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+# glow keeps the binary and the dependency tree small; wgpu is not needed
+# for a 2D music client. Its GL contexts come from glutin, which has no iOS
+# backend.
+eframe = { version = "0.36.2", default-features = false, features = ["glow", "wayland", "x11"] }
+# Keeps the app running without a window around eframe::run_native. It
+# brings eframe with glow, and an iOS app keeps its one window, so iOS
+# leaves it out (src/shell.rs). The same revision as the fastframe crates
+# above.
+fastframe-shell = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0" }
+# The title bar the app draws itself: the header drag and double-click on
+# every platform, and on Windows and Linux the caption buttons and resizable
+# edges when the listener turns the platform's frame off. It brings eframe
+# with glow too, and an iOS window has no title bar (src/titlebar.rs).
+fastframe-titlebar = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0" }
+# Native asynchronous file selection on macOS, Windows and Linux desktop
+# portals. It has no iOS backend (src/backend.rs, `no_file_dialog`).
+rfd = "0.17.2"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+# iOS draws the UI with wgpu on Metal. eframe's `wgpu` feature would build
+# wgpu's Vulkan, GL and WebGPU backends as well, so it takes wgpu without
+# them, and the line after asks for Metal alone, at the version egui-wgpu
+# uses.
+eframe = { version = "0.36.2", default-features = false, features = ["wgpu_no_default_features"] }
+wgpu = { version = "30", default-features = false, features = ["metal", "wgsl", "std"] }
 
 [build-dependencies]
 # Drops unfinished PO entries and compiles catalog text and gettext plural

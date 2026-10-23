@@ -668,6 +668,29 @@ pub fn autostart() -> fastframe_autostart::Autostart {
     fastframe_autostart::Autostart::new("spotifast", "Spotifast")
 }
 
+/// What a file dialog answers: the file or folder picked, or `None` when the
+/// person cancels it.
+pub type Picked =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Option<std::path::PathBuf>> + Send>>;
+
+/// A native dialog's answer as the path it picked.
+#[cfg(not(target_os = "ios"))]
+fn picked(
+    dialog: impl std::future::Future<Output = Option<rfd::FileHandle>> + Send + 'static,
+) -> Picked {
+    Box::pin(async move {
+        let file = dialog.await?;
+        Some(file.path().to_path_buf())
+    })
+}
+
+/// iOS has no file dialog here: the answer is a cancel, at once.
+#[cfg(target_os = "ios")]
+fn no_file_dialog() -> Picked {
+    log::info!("no file dialog on iOS");
+    Box::pin(std::future::ready(None))
+}
+
 pub enum Command {
     OpenThemesFolder,
     /// Read or change the login registration, off the UI thread: it reads
@@ -694,12 +717,10 @@ pub enum Command {
     ChoosePlaylistCover {
         id: String,
         request: u64,
-        selected:
-            std::pin::Pin<Box<dyn std::future::Future<Output = Option<rfd::FileHandle>> + Send>>,
+        selected: Picked,
     },
     ChooseLocalFilesFolder {
-        selected:
-            std::pin::Pin<Box<dyn std::future::Future<Output = Option<rfd::FileHandle>> + Send>>,
+        selected: Picked,
     },
     /// Find the songs in the local files folder, off the UI thread, as the
     /// player does when it starts.
@@ -1310,14 +1331,20 @@ impl Backend {
         if self.offline {
             return;
         }
-        let selected = rfd::AsyncFileDialog::new()
-            .set_title("Choose playlist cover")
-            .add_filter("JPEG or PNG image", &["jpg", "jpeg", "png"])
-            .pick_file();
+        #[cfg(not(target_os = "ios"))]
+        let selected = {
+            let dialog = rfd::AsyncFileDialog::new()
+                .set_title("Choose playlist cover")
+                .add_filter("JPEG or PNG image", &["jpg", "jpeg", "png"])
+                .pick_file();
+            picked(dialog)
+        };
+        #[cfg(target_os = "ios")]
+        let selected = no_file_dialog();
         self.send(Command::ChoosePlaylistCover {
             id,
             request,
-            selected: Box::pin(selected),
+            selected,
         });
     }
 
@@ -1326,12 +1353,16 @@ impl Backend {
         if self.offline {
             return;
         }
-        let selected = rfd::AsyncFileDialog::new()
-            .set_title("Choose the local files folder")
-            .pick_folder();
-        self.send(Command::ChooseLocalFilesFolder {
-            selected: Box::pin(selected),
-        });
+        #[cfg(not(target_os = "ios"))]
+        let selected = {
+            let dialog = rfd::AsyncFileDialog::new()
+                .set_title("Choose the local files folder")
+                .pick_folder();
+            picked(dialog)
+        };
+        #[cfg(target_os = "ios")]
+        let selected = no_file_dialog();
+        self.send(Command::ChooseLocalFilesFolder { selected });
     }
 
     pub fn api(&self, request: ApiRequest) {
@@ -2173,7 +2204,7 @@ impl Worker {
                     let events = self.events.clone();
                     let waker = self.waker.clone();
                     tokio::spawn(async move {
-                        let folder = selected.await.map(|folder| folder.path().to_path_buf());
+                        let folder = selected.await;
                         let _ = events.send(Event::LocalFilesFolderChosen(folder));
                         waker.wake();
                     });
@@ -2207,7 +2238,7 @@ impl Worker {
                         let result = match selected {
                             None => Ok(None),
                             Some(file) => tokio::task::spawn_blocking(move || {
-                                crate::playlist_cover::read(file.path()).map(Some)
+                                crate::playlist_cover::read(&file).map(Some)
                             })
                             .await
                             .unwrap_or_else(|_| {

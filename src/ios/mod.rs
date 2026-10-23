@@ -12,6 +12,7 @@ mod selftest;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::app::{App, AppOptions};
 use crate::backend::Waker;
@@ -74,6 +75,11 @@ pub fn run() -> ! {
     crate::window::set_fixed_size(true);
     let app = Rc::new(RefCell::new(app));
     let creator: eframe::AppCreator<'_> = Box::new(move |cc| {
+        // The renderer actually chosen, as the desktop logs its OpenGL one.
+        if let Some(render) = &cc.wgpu_render_state {
+            let info = render.adapter.get_info();
+            log::info!("wgpu adapter: {}, {:?}", info.name, info.backend);
+        }
         waker.attach(&cc.egui_ctx);
         app.borrow_mut().attach(&cc.egui_ctx);
         APP.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
@@ -85,6 +91,7 @@ pub fn run() -> ! {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_title("Spotifast"),
         persistence_path: Some(storage),
+        wgpu_options: wgpu_options(),
         ..Default::default()
     };
     // From here this thread draws the window: a durable write on it is
@@ -149,6 +156,32 @@ fn eframe_storage(dirs: &AppDirs) -> PathBuf {
     match std::env::home_dir() {
         Some(home) => home.join("Library/Application Support/spotifast/app.ron"),
         None => dirs.config.join("app.ron"),
+    }
+}
+
+/// eframe's wgpu setup, with a device that asks only for what every iPhone
+/// and the simulator offer: egui's default limits ask for 16 inter-stage
+/// shader variables, the simulator's Metal has 15, and the window then
+/// fails to open.
+fn wgpu_options() -> eframe::egui_wgpu::WgpuConfiguration {
+    let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+    setup.device_descriptor = Arc::new(device_descriptor);
+    eframe::egui_wgpu::WgpuConfiguration {
+        wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(setup),
+        ..Default::default()
+    }
+}
+
+/// egui's device with wgpu's downlevel limits, which any GPU that runs
+/// OpenGL ES 3.1 meets, and textures as large as egui's own default allows.
+fn device_descriptor(_adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
+    wgpu::DeviceDescriptor {
+        label: Some("egui wgpu device"),
+        required_limits: wgpu::Limits {
+            max_texture_dimension_2d: 8192,
+            ..wgpu::Limits::downlevel_defaults()
+        },
+        ..Default::default()
     }
 }
 

@@ -249,7 +249,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 # iOS draws the UI with wgpu on Metal. eframe's `wgpu` feature would build
 # wgpu's Vulkan, GL and WebGPU backends as well, so it takes wgpu without
 # them, and the line after asks for Metal alone, at the version egui-wgpu
-# uses.
+# uses. src/ios also names wgpu's device limits.
 eframe = { version = "0.36.2", default-features = false, features = ["wgpu_no_default_features"] }
 wgpu = { version = "30", default-features = false, features = ["metal", "wgsl", "std"] }
 # Mozilla's certificate roots, built in. rustls-native-certs finds no roots

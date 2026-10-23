@@ -374,6 +374,7 @@ main fields are:
 | `eq_on` | `false` | The equalizer shapes local playback |
 | `eq_preamp_db` | `0` | The preamp, in decibels, -12 to 12 |
 | `eq_bands_db` | ten zeros | The bands from 60 Hz to 16 kHz, in decibels, -12 to 12 |
+| `eq_bass_boost_db` | `0` | Bass boost, a low shelf at 90 Hz on top of the bands, in decibels, 0 to 12. Presets leave it as it is |
 | `eq_user_presets` | `[]` | Equalizer presets you saved, each with a `name`, its `preamp_db` and its ten `bands_db`, listed after the built-in presets |
 | `balance` | `0` | Left to right, -1 to 1, for local playback |
 | `mono` | `false` | Play both channels the same |

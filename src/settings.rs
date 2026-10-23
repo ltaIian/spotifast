@@ -390,6 +390,9 @@ pub struct Settings {
     pub eq_preamp_db: f32,
     /// The ten bands, in decibels, 60 Hz to 16 kHz.
     pub eq_bands_db: [f32; 10],
+    /// Bass boost, in decibels, 0 to `eq::BASS_BOOST_MAX_DB`: a low shelf on
+    /// top of the bands, kept apart from presets so it stacks with any.
+    pub eq_bass_boost_db: f32,
     /// Equalizer presets saved here, listed after the built-in ones (#702).
     pub eq_user_presets: Vec<UserEqPreset>,
     /// The balance, -1 all left to 1 all right.
@@ -526,6 +529,7 @@ impl Default for Settings {
             eq_on: false,
             eq_preamp_db: 0.0,
             eq_bands_db: [0.0; 10],
+            eq_bass_boost_db: 0.0,
             eq_user_presets: Vec::new(),
             balance: 0.0,
             mono: false,

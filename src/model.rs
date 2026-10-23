@@ -1326,6 +1326,8 @@ pub enum Action {
     ToggleEq,
     SetEqBand(usize, f32),
     SetEqPreamp(f32),
+    /// The bass boost slider, in decibels, 0 to `eq::BASS_BOOST_MAX_DB`.
+    SetEqBassBoost(f32),
     /// One of Winamp's presets, by its place in the list.
     ApplyEqPreset(usize),
     /// A preset saved here, by name: its preamp and bands.

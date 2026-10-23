@@ -11655,6 +11655,10 @@ impl App {
                     gain_db.clamp(-crate::eq::RANGE_DB, crate::eq::RANGE_DB);
                 self.push_eq();
             }
+            Action::SetEqBassBoost(gain_db) => {
+                self.settings.eq_bass_boost_db = gain_db.clamp(0.0, crate::eq::BASS_BOOST_MAX_DB);
+                self.push_eq();
+            }
             Action::ApplyUserEqPreset(name) => {
                 if let Some(preset) = self
                     .settings
@@ -12855,6 +12859,7 @@ pub fn eq_settings(settings: &Settings) -> crate::eq::EqSettings {
         bands_db: settings.eq_bands_db,
         balance: settings.balance,
         mono: settings.mono,
+        bass_boost_db: settings.eq_bass_boost_db,
     }
     .clamped()
 }

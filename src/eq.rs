@@ -22,6 +22,11 @@ const FLAT: f32 = 0.05;
 /// How far the solved gains may go past the sliders while making the
 /// combined response meet them; a guard, not a target.
 const SOLVED_LIMIT: f64 = 36.0;
+/// The bass boost shelf's corner, in hertz: between the 60 Hz and 170 Hz
+/// bands, so the boost is its own control and not a second 60 Hz slider.
+pub const BASS_BOOST_HZ: f32 = 90.0;
+/// How far the bass boost goes, in decibels; it only ever adds.
+pub const BASS_BOOST_MAX_DB: f32 = 12.0;
 
 /// Equalizer, preamp, balance, and mono settings.
 ///
@@ -35,6 +40,9 @@ pub struct EqSettings {
     /// -1 is all left, 1 all right.
     pub balance: f32,
     pub mono: bool,
+    /// A low shelf at `BASS_BOOST_HZ` on top of the bands, 0 to
+    /// `BASS_BOOST_MAX_DB`. Like the bands, it applies only while `on`.
+    pub bass_boost_db: f32,
 }
 
 impl Default for EqSettings {
@@ -45,6 +53,7 @@ impl Default for EqSettings {
             bands_db: [0.0; 10],
             balance: 0.0,
             mono: false,
+            bass_boost_db: 0.0,
         }
     }
 }
@@ -57,6 +66,7 @@ impl EqSettings {
             *band = band.clamp(-RANGE_DB, RANGE_DB);
         }
         self.balance = self.balance.clamp(-1.0, 1.0);
+        self.bass_boost_db = self.bass_boost_db.clamp(0.0, BASS_BOOST_MAX_DB);
         self
     }
 

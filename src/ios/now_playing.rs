@@ -11,7 +11,7 @@ use std::ffi::{CString, c_char};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use fastframe_now_playing::{App, Command, Playback, State};
+use fastframe_now_playing::{App, Command, Playback, State, Track};
 
 /// How far the position may stray from where iOS has it before it is sent
 /// again. iOS moves the elapsed time on by itself while playing.
@@ -164,6 +164,23 @@ fn publish(state: &State) {
     }
 }
 
+/// The background self-test: a track that is not one, to see Now Playing
+/// take it while the app is in the background.
+pub fn show_test_track() {
+    publish(&State {
+        playback: Playback::Playing,
+        track: Some(Track {
+            id: "spotifast:selftest".into(),
+            title: "Spotifast self-test".into(),
+            artists: vec!["Spotifast".into()],
+            album: "Simulator".into(),
+            duration: Some(Duration::from_secs(180)),
+            ..Track::default()
+        }),
+        position: Duration::from_secs(5),
+        ..State::default()
+    });
+}
 
 /// `value` as a C string, without any NUL it holds.
 fn text(value: &str) -> CString {

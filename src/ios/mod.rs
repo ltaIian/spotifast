@@ -8,6 +8,7 @@
 //! fastframe-shell do, for one window that lasts as long as the app.
 
 pub mod auth_sheet;
+mod background;
 pub mod now_playing;
 mod selftest;
 
@@ -60,8 +61,10 @@ pub fn run() -> ! {
         log::warn!("unable to create the application directories: {error}");
     }
     let self_test = selftest::requested();
-    if self_test == Some(selftest::Mode::Diagnostics) {
-        selftest::start();
+    match self_test {
+        Some(selftest::Mode::Diagnostics) => selftest::start(),
+        Some(selftest::Mode::Background) => selftest::start_background(),
+        _ => {}
     }
     let mut settings = Settings::load(&dirs.settings_file());
     keep_to_one_window(&mut settings);
@@ -119,12 +122,28 @@ pub fn run() -> ! {
 /// The app has gone to the background, where iOS may suspend it at any
 /// moment and end it without warning: save what quitting would. A sign-in
 /// waiting on its sheet is given up: a suspended app cannot answer the
-/// redirect, and its listener would hold the port.
+/// redirect, and its listener would hold the port. Until it comes back,
+/// the app runs as the desktop does without a window: nobody sees it.
 pub fn will_background() {
+    background::set_in_background(true);
     with_app("background", |app| {
         auth_sheet::give_up(app);
         save(app);
+        app.window_gone();
     });
+}
+
+/// The app is coming back to the foreground: its window is seen again.
+pub fn will_foreground() {
+    background::set_in_background(false);
+    with_app("foreground", |app| app.window_hidden = false);
+    wake();
+}
+
+/// The timer `main.swift` runs while the app is in the background: a logic
+/// pass when none ran lately (`background`).
+pub fn background_tick() {
+    background::tick();
 }
 
 /// The app is about to end: save what quitting would. The process ends right
@@ -256,6 +275,7 @@ impl eframe::App for Window {
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        background::window_pass();
         if let Some(insets) = &mut self.insets {
             insets.report(ctx);
         }

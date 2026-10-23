@@ -14,6 +14,14 @@ void spotifast_main(void) __attribute__((noreturn));
 /// background, where iOS may suspend it and end it without warning.
 void spotifast_will_background(void);
 
+/// The app is back in the foreground: call it when it will enter the
+/// foreground.
+void spotifast_will_foreground(void);
+
+/// A logic pass when none ran lately: call it once a second, on the main
+/// thread, while the app is in the background.
+void spotifast_background_tick(void);
+
 /// A remote control was used, with one of NowPlaying.swift's codes: call it
 /// on the main thread.
 void spotifast_ios_command(int32_t command, double value);

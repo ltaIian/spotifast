@@ -7,8 +7,13 @@
 //! - `signin-web`: the Web API sign-in starts by itself once the sign-in
 //!   screen is up, as its button starts it, so its sheet shows what Spotify
 //!   answers this client id with;
-//! - `signin-playback`: the playback authorization, the same way.
+//! - `signin-playback`: the playback authorization, the same way;
+//! - `background`: a silent output plays, so iOS keeps the app running in
+//!   the background, Now Playing shows a test track, and every two seconds
+//!   a line says whether the app is in the background and which logic
+//!   passes ran: the window's, or the background timer's.
 
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use crate::app::App;
@@ -31,6 +36,8 @@ pub enum Mode {
     SignInWeb,
     /// `signin-playback`: the playback authorization, started at launch.
     SignInPlayback,
+    /// `background`: the app's logic followed into the background.
+    Background,
 }
 
 /// What this run was asked for, if anything.
@@ -40,7 +47,82 @@ pub fn requested() -> Option<Mode> {
         "1" => Some(Mode::Diagnostics),
         "signin-web" => Some(Mode::SignInWeb),
         "signin-playback" => Some(Mode::SignInPlayback),
+        "background" => Some(Mode::Background),
         _ => None,
+    }
+}
+
+/// How long the background self-test reports, in two-second beats.
+const HEARTBEATS: u32 = 60;
+
+/// Starts the background self-test on a thread of its own.
+pub fn start_background() {
+    let spawned = std::thread::Builder::new()
+        .name("selftest".into())
+        .spawn(|| {
+            let output = silent_output();
+            std::thread::sleep(Duration::from_secs(5));
+            super::now_playing::show_test_track();
+            heartbeat();
+            drop(output);
+            log::info!("selftest: done");
+        });
+    if let Err(error) = spawned {
+        log::warn!("selftest: not started: {error}");
+    }
+}
+
+/// An output that plays silence, which keeps the audio session in use, so
+/// iOS keeps the app running in the background as it does while music
+/// plays.
+fn silent_output() -> Option<cpal::Stream> {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    let device = cpal::default_host().default_output_device()?;
+    let config = device.default_output_config().ok()?;
+    if config.sample_format() != cpal::SampleFormat::F32 {
+        log::warn!("selftest: no silent output for {}", config.sample_format());
+        return None;
+    }
+    let stream = device
+        .build_output_stream(
+            config.config(),
+            |data: &mut [f32], _: &cpal::OutputCallbackInfo| data.fill(0.0),
+            |error| log::warn!("selftest: silent output: {error}"),
+            None,
+        )
+        .ok()?;
+    stream.play().ok()?;
+    log::info!("selftest: a silent output plays");
+    Some(stream)
+}
+
+/// Every two seconds: foreground or background, and the logic passes run
+/// since the last beat.
+fn heartbeat() {
+    use super::background::{TIMER_PASSES, TIMER_TICKS, WINDOW_PASSES};
+    let counts = || {
+        [
+            WINDOW_PASSES.load(Ordering::Relaxed),
+            TIMER_TICKS.load(Ordering::Relaxed),
+            TIMER_PASSES.load(Ordering::Relaxed),
+        ]
+    };
+    let mut last = counts();
+    for beat in 1..=HEARTBEATS {
+        std::thread::sleep(Duration::from_secs(2));
+        let now = counts();
+        let place = if super::background::in_background() {
+            "background"
+        } else {
+            "foreground"
+        };
+        log::info!(
+            "selftest: beat {beat}: {place}, window passes +{}, timer ticks +{}, timer passes +{}",
+            now[0] - last[0],
+            now[1] - last[1],
+            now[2] - last[2]
+        );
+        last = now;
     }
 }
 

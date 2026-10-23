@@ -8,7 +8,7 @@ import Foundation
 import UIKit
 
 /// Whether the simulator's smoke test asked for diagnostics.
-let selfTest = ProcessInfo.processInfo.environment["SPOTIFAST_SELFTEST"] == "1"
+let selfTest = ProcessInfo.processInfo.environment["SPOTIFAST_SELFTEST"] != nil
 
 /// A line for the console and the system log, before Spotifast's own log
 /// has started.
@@ -50,12 +50,35 @@ if selfTest {
 
 // iOS may suspend the app once it is in the background, and end it without
 // warning: Spotifast saves then, as it does on the desktop when it quits.
-// These come on the main thread, and the saving is done before they return.
+// While it runs there, playing, UIKit draws nothing, and a timer asks the
+// Rust side each second for a logic pass, in case eframe runs none
+// (src/ios/background.rs). These come on the main thread, and the saving is
+// done before they return.
 let notifications = NotificationCenter.default
+var backgroundTicks: Timer?
 _ = notifications.addObserver(
     forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil
 ) { _ in
+    if selfTest {
+        report("entered the background")
+    }
     spotifast_will_background()
+    backgroundTicks?.invalidate()
+    let ticks = Timer(timeInterval: 1, repeats: true) { _ in
+        spotifast_background_tick()
+    }
+    RunLoop.main.add(ticks, forMode: .common)
+    backgroundTicks = ticks
+}
+_ = notifications.addObserver(
+    forName: UIApplication.willEnterForegroundNotification, object: nil, queue: nil
+) { _ in
+    if selfTest {
+        report("entering the foreground")
+    }
+    backgroundTicks?.invalidate()
+    backgroundTicks = nil
+    spotifast_will_foreground()
 }
 _ = notifications.addObserver(
     forName: UIApplication.willTerminateNotification, object: nil, queue: nil

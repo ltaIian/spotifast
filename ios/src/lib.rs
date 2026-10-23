@@ -19,6 +19,19 @@ pub extern "C" fn spotifast_will_background() {
     spotifast::ios::will_background();
 }
 
+/// The app is back in the foreground. Call it on the main thread when it
+/// will enter the foreground.
+#[unsafe(no_mangle)]
+pub extern "C" fn spotifast_will_foreground() {
+    spotifast::ios::will_foreground();
+}
+
+/// A logic pass when none ran lately. Call it on the main thread, once a
+/// second, while the app is in the background.
+#[unsafe(no_mangle)]
+pub extern "C" fn spotifast_background_tick() {
+    spotifast::ios::background_tick();
+}
 
 /// A remote control was used: the lock screen, Control Center or
 /// headphones (the codes are NowPlaying.swift's). Call it on the main

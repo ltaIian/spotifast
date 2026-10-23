@@ -617,6 +617,7 @@ fastframe_icons::icons! {
         SkipBackFilled => "skip-back-filled",
         SkipForward => "skip-forward",
         SkipForwardFilled => "skip-forward-filled",
+        SlidersVertical => "sliders-vertical",
         Smartphone => lucide "smartphone",
         Sparkles => "sparkles",
         Speaker => "speaker",

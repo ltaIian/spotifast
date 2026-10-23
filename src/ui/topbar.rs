@@ -624,7 +624,8 @@ fn search(app: &mut App, ui: &mut egui::Ui, width: f32) {
     }
 }
 
-/// The account's avatar and its menu.
+/// The account's avatar and its menu. In the compact layout the menu also
+/// opens the equalizer, which a phone has no Winamp window for.
 fn account(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let locale = app.locale;
@@ -712,6 +713,16 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
                 &gettext(locale, "Settings"),
             ) {
                 app.actions.push(Action::Open(Page::Settings));
+            }
+            if compact
+                && super::widgets::menu_item(
+                    ui,
+                    &palette,
+                    Some(Icon::SlidersVertical),
+                    &gettext(locale, "Equalizer"),
+                )
+            {
+                app.actions.push(Action::Open(Page::Equalizer));
             }
             if super::widgets::menu_item(
                 ui,

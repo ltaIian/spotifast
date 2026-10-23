@@ -61,6 +61,45 @@ impl<'a> RowText<'a> {
 
 /// The guide to writing a palette file for the themes folder.
 const THEMES_GUIDE_URL: &str = "https://spotifast.rocks/settings-and-files/#custom-themes";
+/// The equalizer's presets as chips, the built-in ones and then the ones
+/// saved here (#702), with the controls that save and delete those. A saved
+/// preset carries its preamp too, and is the current one when both it and a
+/// built-in one match.
+pub(super) fn eq_presets(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let built_in = crate::eq::PRESETS.len();
+    let user_presets = app.settings.eq_user_presets.clone();
+    let names: Vec<(usize, &str)> = crate::eq::PRESETS
+        .iter()
+        .map(|preset| preset.name)
+        .chain(user_presets.iter().map(|preset| preset.name.as_str()))
+        .enumerate()
+        .collect();
+    let current_user = user_presets.iter().position(|preset| {
+        preset.bands_db == app.settings.eq_bands_db && preset.preamp_db == app.settings.eq_preamp_db
+    });
+    let current = current_user
+        .map(|index| built_in + index)
+        .or_else(|| {
+            crate::eq::PRESETS
+                .iter()
+                .position(|preset| preset.bands_db == app.settings.eq_bands_db)
+        })
+        .unwrap_or(usize::MAX);
+    if let Some(picked) = widgets::chips(ui, &palette, &names, current) {
+        app.actions.push(match picked.checked_sub(built_in) {
+            Some(user) => Action::ApplyUserEqPreset(user_presets[user].name.clone()),
+            None => Action::ApplyEqPreset(picked),
+        });
+    }
+    ui.add_space(8.0);
+    eq_preset_controls(
+        app,
+        ui,
+        current_user.map(|index| user_presets[index].name.as_str()),
+    );
+}
+
 /// Saving the equalizer as a named preset, and deleting the saved preset
 /// that is in use (#702).
 fn eq_preset_controls(app: &mut App, ui: &mut egui::Ui, current: Option<&str>) {
@@ -2025,6 +2064,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     }
 
     let equalizer = gettext(locale, "Equalizer");
+    // Translators: the slider that raises the lowest frequencies on top of the equalizer's bands.
+    let bass_boost = gettext(locale, "Bass boost");
     let equalizer_rows = [
         RowText::new(
             equalizer.clone(),
@@ -2035,12 +2076,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ),
         RowText::new(
             format!(
-                "{} {} {} dB",
+                "{} {} {} {} dB",
                 gettext(locale, "Presets"),
                 // Translators: a search keyword for the equalizer's preamplifier slider.
                 gettext(locale, "Preamp"),
                 // Translators: a search keyword for the equalizer's frequency band sliders.
                 gettext(locale, "Bands"),
+                bass_boost,
             ),
             crate::eq::PRESETS
                 .iter()
@@ -2075,48 +2117,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     }
                 },
             );
-            // The built-in presets, then the ones saved here (#702), which
-            // carry their preamp too and are the current one when both match.
-            let built_in = crate::eq::PRESETS.len();
-            let user_presets = app.settings.eq_user_presets.clone();
-            let names: Vec<(usize, &str)> = crate::eq::PRESETS
-                .iter()
-                .map(|preset| preset.name)
-                .chain(user_presets.iter().map(|preset| preset.name.as_str()))
-                .enumerate()
-                .collect();
-            let current_user = user_presets.iter().position(|preset| {
-                preset.bands_db == app.settings.eq_bands_db
-                    && preset.preamp_db == app.settings.eq_preamp_db
-            });
-            let current = current_user
-                .map(|index| built_in + index)
-                .or_else(|| {
-                    crate::eq::PRESETS
-                        .iter()
-                        .position(|preset| preset.bands_db == app.settings.eq_bands_db)
-                })
-                .unwrap_or(usize::MAX);
             let eq_extra_visible = equalizer_rows[1].matches(&needle, &equalizer);
             if eq_extra_visible {
-                if let Some(picked) = widgets::chips(ui, &palette, &names, current) {
-                    app.actions.push(match picked.checked_sub(built_in) {
-                        Some(user) => Action::ApplyUserEqPreset(user_presets[user].name.clone()),
-                        None => Action::ApplyEqPreset(picked),
-                    });
-                }
-                ui.add_space(8.0);
-                eq_preset_controls(
-                    app,
-                    ui,
-                    current_user.map(|index| user_presets[index].name.as_str()),
-                );
+                eq_presets(app, ui);
                 ui.add_space(10.0);
                 eq_curve(ui, &palette, &crate::app::eq_settings(&app.settings));
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
+                let on = app.settings.eq_on;
+                let sliders = |ui: &mut egui::Ui| {
                     ui.spacing_mut().item_spacing.x = 14.0;
-                    let on = app.settings.eq_on;
                     let mut preamp = app.settings.eq_preamp_db;
                     if eq_slider(
                         ui,
@@ -2134,7 +2143,28 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             app.actions.push(Action::SetEqBand(band, gain));
                         }
                     }
-                });
+                };
+                // The row needs 470 points; on a phone it wraps.
+                if theme::compact(ui.ctx()) {
+                    ui.horizontal_wrapped(sliders);
+                } else {
+                    ui.horizontal(sliders);
+                }
+                ui.add_space(12.0);
+                let mut boost = app.settings.eq_bass_boost_db;
+                // As wide as the row of sliders above it.
+                let width = ui.available_width().min(EQ_ROW_WIDTH);
+                if eq_bar_slider(
+                    ui,
+                    &palette,
+                    &bass_boost,
+                    &mut boost,
+                    0.0..=crate::eq::BASS_BOOST_MAX_DB,
+                    on,
+                    width,
+                ) {
+                    app.actions.push(Action::SetEqBassBoost(boost));
+                }
             }
         });
     }
@@ -2492,7 +2522,7 @@ fn language_picker(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
-fn hertz(hz: f32) -> String {
+pub(super) fn hertz(hz: f32) -> String {
     if hz >= 1000.0 {
         format!("{}K", (hz / 1000.0).round() as u32)
     } else {
@@ -2500,15 +2530,35 @@ fn hertz(hz: f32) -> String {
     }
 }
 
+/// The width of the equalizer's row of eleven sliders in Settings: the
+/// preamp and the ten bands, 30 points each and 14 apart.
+const EQ_ROW_WIDTH: f32 = 470.0;
+
+/// How wide an [`eq_slider`] is: wide enough for a finger on a phone.
+pub(super) fn eq_slider_width(ctx: &egui::Context) -> f32 {
+    if theme::touch(ctx) {
+        theme::TOUCH_TARGET
+    } else {
+        30.0
+    }
+}
+
 /// One vertical slider in the app's own style: the track filled from
 /// 0 dB, the handle in the middle when flat, a double-click to put it
 /// back there. Returns whether it moved.
-fn eq_slider(ui: &mut egui::Ui, palette: &Palette, label: &str, value: &mut f32, on: bool) -> bool {
+pub(super) fn eq_slider(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    label: &str,
+    value: &mut f32,
+    on: bool,
+) -> bool {
     use egui::{Rect, Stroke, pos2, vec2};
     let range = crate::eq::RANGE_DB;
+    let width = eq_slider_width(ui.ctx());
     ui.vertical(|ui| {
         let (rect, response) =
-            ui.allocate_exact_size(vec2(30.0, 118.0), egui::Sense::click_and_drag());
+            ui.allocate_exact_size(vec2(width, 118.0), egui::Sense::click_and_drag());
         let track = Rect::from_center_size(rect.center(), vec2(4.0, rect.height() - 20.0));
         let y_of = |db: f32| track.bottom() - (db + range) / (2.0 * range) * track.height();
         let mut changed = false;
@@ -2552,15 +2602,183 @@ fn eq_slider(ui: &mut egui::Ui, palette: &Palette, label: &str, value: &mut f32,
                 );
             }
         }
-        theme::text(ui, label, theme::regular(11.5), palette.secondary);
+        if theme::touch(ui.ctx()) {
+            // Centred under the wider slider.
+            ui.allocate_ui_with_layout(vec2(width, 16.0), Layout::top_down(Align::Center), |ui| {
+                theme::text(ui, label, theme::regular(11.5), palette.secondary);
+            });
+        } else {
+            theme::text(ui, label, theme::regular(11.5), palette.secondary);
+        }
         changed
     })
     .inner
 }
 
+/// The step the equalizer's horizontal sliders move in.
+const EQ_BAR_STEP: f32 = 0.5;
+
+/// A gain as the equalizer's sliders say it: "0 dB" at rest, a sign before
+/// any other value, and a tenth only where there is one.
+fn gain_label(db: f32) -> String {
+    let db = (db * 10.0).round() / 10.0;
+    if db == 0.0 {
+        "0 dB".to_string()
+    } else if db.fract() == 0.0 {
+        format!("{db:+.0} dB")
+    } else {
+        format!("{db:+.1} dB")
+    }
+}
+
+/// The equalizer's horizontal slider, for a gain with no band of its own:
+/// Bass boost, and the preamp on the phone's equalizer page. The label and
+/// the value sit above the track, which fills from 0 dB as the bands' do,
+/// in steps of half a decibel; a double click puts it back at 0 dB. Dim
+/// while the equalizer is off. Returns whether it moved.
+pub(super) fn eq_bar_slider(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    label: &str,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    on: bool,
+    width: f32,
+) -> bool {
+    use egui::{Rect, Stroke, pos2, vec2};
+    let (low, high) = (*range.start(), *range.end());
+    let track_height = if theme::touch(ui.ctx()) {
+        theme::TOUCH_TARGET
+    } else {
+        24.0
+    };
+    let text_height = 18.0;
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(width, text_height + track_height), egui::Sense::hover());
+    let text_rect = Rect::from_min_size(rect.min, vec2(width, text_height));
+    let track_rect = Rect::from_min_max(pos2(rect.left(), text_rect.bottom()), rect.max);
+    let id = ui.make_persistent_id(("eq-bar-slider", label));
+    let response = ui.interact(track_rect, id, egui::Sense::click_and_drag());
+    // The handle's radius in from each end, so it stays on the track.
+    let bar = Rect::from_center_size(
+        track_rect.center(),
+        vec2((track_rect.width() - 14.0).max(1.0), 4.0),
+    );
+    let snap = |db: f32| ((db / EQ_BAR_STEP).round() * EQ_BAR_STEP).clamp(low, high);
+    let before = *value;
+    if response.double_clicked() {
+        *value = 0.0_f32.clamp(low, high);
+    } else if (response.dragged() || response.clicked())
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let fraction = ((pos.x - bar.left()) / bar.width()).clamp(0.0, 1.0);
+        *value = snap(low + fraction * (high - low));
+    }
+    if response.has_focus() {
+        ui.memory_mut(|memory| {
+            memory.set_focus_lock_filter(
+                response.id,
+                egui::EventFilter {
+                    horizontal_arrows: true,
+                    ..Default::default()
+                },
+            )
+        });
+    }
+    if response.enabled() {
+        let focused = response.has_focus();
+        let (steps, set) = ui.input(|input| {
+            use egui::accesskit::{Action, ActionData};
+            let mut steps = input.num_accesskit_action_requests(response.id, Action::Increment)
+                as i32
+                - input.num_accesskit_action_requests(response.id, Action::Decrement) as i32;
+            if focused {
+                steps += input.num_presses(egui::Key::ArrowRight) as i32
+                    - input.num_presses(egui::Key::ArrowLeft) as i32;
+            }
+            let set = input
+                .accesskit_action_requests(response.id, Action::SetValue)
+                .filter_map(|request| match request.data {
+                    Some(ActionData::NumericValue(value)) if value.is_finite() => Some(value),
+                    _ => None,
+                })
+                .last();
+            (steps, set)
+        });
+        if let Some(set) = set {
+            *value = snap(set as f32);
+        }
+        if steps != 0 {
+            *value = snap(*value + steps as f32 * EQ_BAR_STEP);
+        }
+    }
+    let changed = *value != before;
+    response.widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), f64::from(*value), label));
+    ui.ctx().accesskit_node_builder(response.id, |node| {
+        use egui::accesskit::Action;
+        node.set_min_numeric_value(f64::from(low));
+        node.set_max_numeric_value(f64::from(high));
+        node.set_numeric_value_step(f64::from(EQ_BAR_STEP));
+        node.add_action(Action::SetValue);
+        if *value > low {
+            node.add_action(Action::Decrement);
+        }
+        if *value < high {
+            node.add_action(Action::Increment);
+        }
+    });
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        let x_of = |db: f32| bar.left() + (db - low) / (high - low) * bar.width();
+        painter.rect_filled(bar, 2.0, palette.surface_active);
+        let zero = x_of(0.0_f32.clamp(low, high));
+        let at = x_of(*value);
+        let fill = if on { palette.accent } else { palette.dim };
+        painter.rect_filled(
+            Rect::from_min_max(
+                pos2(zero.min(at), bar.top()),
+                pos2(zero.max(at), bar.bottom()),
+            ),
+            2.0,
+            fill,
+        );
+        if low < 0.0 {
+            painter.vline(
+                zero,
+                (bar.top() - 3.0)..=(bar.bottom() + 3.0),
+                Stroke::new(1.0, palette.dim),
+            );
+        }
+        painter.circle_filled(pos2(at, bar.center().y), 7.0, palette.text);
+        let shown = gain_label(*value);
+        let value_galley =
+            painter.layout_no_wrap(shown, theme::regular(12.5), palette.secondary);
+        let value_width = value_galley.size().x;
+        painter.galley(
+            pos2(
+                text_rect.right() - value_width,
+                text_rect.center().y - value_galley.size().y / 2.0,
+            ),
+            value_galley,
+            palette.secondary,
+        );
+        crate::bidi::paint_line(
+            painter,
+            text_rect.left(),
+            text_rect.right() - value_width - 8.0,
+            text_rect.center().y,
+            label,
+            theme::medium(13.0),
+            palette.text,
+        );
+    }
+    theme::focus_ring(ui, &response);
+    changed
+}
+
 /// The equalizer's response over the audible range, the bands marked on
 /// it: the shape says what a row of numbers cannot.
-fn eq_curve(ui: &mut egui::Ui, palette: &Palette, settings: &crate::eq::EqSettings) {
+pub(super) fn eq_curve(ui: &mut egui::Ui, palette: &Palette, settings: &crate::eq::EqSettings) {
     use egui::{Shape, Stroke, pos2, vec2};
     let width = ui.available_width().min(720.0);
     let (rect, _) = ui.allocate_exact_size(vec2(width, 120.0), egui::Sense::hover());
@@ -2817,6 +3035,73 @@ mod tests {
             );
         });
         output.textures_delta.clear();
+    }
+
+    /// The equalizer's gains read as decibels, signed, with a tenth only
+    /// where there is one.
+    #[test]
+    fn the_equalizers_gains_read_as_decibels() {
+        assert_eq!(super::gain_label(0.0), "0 dB");
+        assert_eq!(super::gain_label(-0.0), "0 dB");
+        assert_eq!(super::gain_label(6.0), "+6 dB");
+        assert_eq!(super::gain_label(6.5), "+6.5 dB");
+        assert_eq!(super::gain_label(-3.5), "-3.5 dB");
+        assert_eq!(super::gain_label(12.0), "+12 dB");
+    }
+
+    /// The Bass boost slider keeps to its range in half decibels, and a
+    /// screen reader can set it.
+    #[test]
+    fn the_bass_boost_slider_moves_in_half_decibels_within_its_range() {
+        use egui::accesskit::{Action, ActionData, ActionRequest, TreeId};
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::theme::install(&ctx);
+        let palette = crate::theme::Palette::dark();
+        let frame = |value: &mut f32, events: Vec<egui::Event>| {
+            let mut moved = false;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    moved = super::eq_bar_slider(
+                        ui,
+                        &palette,
+                        "Bass boost",
+                        value,
+                        0.0..=crate::eq::BASS_BOOST_MAX_DB,
+                        true,
+                        300.0,
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            (moved, output.platform_output.accesskit_update.unwrap())
+        };
+        let mut boost = 0.0;
+        let (_, tree) = frame(&mut boost, vec![]);
+        let (slider, _) = tree
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some("Bass boost"))
+            .expect("the slider");
+        let set = |db: f64| {
+            vec![egui::Event::AccessKitActionRequest(ActionRequest {
+                target_tree: TreeId::ROOT,
+                target_node: *slider,
+                action: Action::SetValue,
+                data: Some(ActionData::NumericValue(db)),
+            })]
+        };
+        let (moved, _) = frame(&mut boost, set(6.3));
+        assert!(moved);
+        assert_eq!(boost, 6.5);
+        frame(&mut boost, set(40.0));
+        assert_eq!(boost, crate::eq::BASS_BOOST_MAX_DB);
+        frame(&mut boost, set(-3.0));
+        assert_eq!(boost, 0.0);
     }
 
     #[test]

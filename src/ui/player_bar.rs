@@ -308,7 +308,8 @@ const NOW_PLAYING_BELOW_COVER: f32 = 340.0;
 
 /// The playing song's own view in the compact layout, which the player bar
 /// opens: the cover large, the song, where it has got to, the transport,
-/// and the controls the desktop's player bar keeps at its right end.
+/// and the controls the desktop's player bar keeps at its right end, the
+/// equalizer among them.
 pub fn now_playing(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let tint = app.now_playing_tint();
@@ -668,7 +669,8 @@ fn now_playing_transport(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlayi
     }
 }
 
-/// The devices, the lyrics, the queue, and what friends are playing.
+/// The devices, the lyrics, the queue, what friends are playing, and the
+/// equalizer, which on a phone has no Winamp window to live in.
 fn now_playing_extras(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>) {
     let palette = app.palette;
     let locale = app.locale;
@@ -698,6 +700,12 @@ fn now_playing_extras(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>
             lit(app.show_friends_panel),
             gettext(locale, "Listening activity"),
             Action::ToggleFriendsPanel,
+        ),
+        (
+            Icon::SlidersVertical,
+            lit(app.settings.eq_on),
+            gettext(locale, "Equalizer"),
+            Action::Open(Page::Equalizer),
         ),
     ];
     // The devices first, then the rest, spread evenly across the row.

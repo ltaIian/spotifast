@@ -770,19 +770,24 @@ impl Processor {
         if to == self.to {
             return;
         }
+        // Leaving the bypass, the filters start flat with no history, which
+        // plays the sound exactly as it comes, and run one block that way
+        // before the change moves them: by then each holds the sound's own
+        // history, so no treble band starts from silence and ticks.
+        let mut flat_first = 0;
         if !self.shaping {
-            // Flat filters with no history play the sound exactly as it
-            // comes, so they start from there and the change moves them.
             self.clear();
             self.tune(&Shape::FLAT);
             self.now = Shape::FLAT;
             self.gain = 1.0;
             self.shaping = true;
+            flat_first = STEP;
         }
         self.from = self.now;
         self.to = to;
-        self.ramp = RAMP;
-        self.block = 0;
+        self.ramp = RAMP + flat_first;
+        self.block = flat_first;
+        self.gain_step = 0.0;
         self.tail = 0;
     }
 
@@ -1191,6 +1196,15 @@ mod tests {
         }
     }
 
+    /// The bands of the preset called `name`.
+    fn preset(name: &str) -> [f32; 10] {
+        PRESETS
+            .iter()
+            .find(|candidate| candidate.name == name)
+            .unwrap()
+            .bands_db
+    }
+
     /// The largest step between neighbouring samples of the left channel.
     fn largest_step(samples: &[f64]) -> f64 {
         let left: Vec<f64> = samples.iter().step_by(2).copied().collect();
@@ -1225,9 +1239,11 @@ mod tests {
         ]
     }
 
-    /// Moving the bass boost, the preamp or a band, or turning the switch
-    /// either way, mid-stream never steps from one sample to the next by
-    /// more than the tone does on its own before or after: no click.
+    /// Moving the bass boost, the preamp or a band, choosing a preset, or
+    /// turning the switch either way, mid-stream never steps from one
+    /// sample to the next by more than the tone does on its own before or
+    /// after: no click. A preset chosen over a bass tone also checks that
+    /// no treble band starts from silence as the filters leave the bypass.
     #[test]
     fn a_change_mid_stream_does_not_click() {
         let on = EqSettings {
@@ -1247,6 +1263,12 @@ mod tests {
         loud.bands_db[0] = 12.0;
         let mut off = loud;
         off.on = false;
+        let mut treble = on;
+        treble.bands_db = preset("Full Treble");
+        let mut booster = on;
+        booster.bands_db = preset("Treble Booster");
+        let mut rock = on;
+        rock.bands_db = preset("Rock");
         let changes = [
             ("the bass boost up", on, boosted, 40.0),
             ("the bass boost down", boosted, on, 40.0),
@@ -1257,6 +1279,9 @@ mod tests {
             ("the switch off", loud, off, 40.0),
             ("the switch on", off, loud, 1000.0),
             ("the switch on", off, loud, 40.0),
+            ("Full Treble", on, treble, 40.0),
+            ("Treble Booster", on, booster, 60.0),
+            ("Rock after Flat", on, rock, 20.0),
         ];
         for (change, from, to, hz) in changes {
             let [before, across, after] = steps_across(from, to, hz);

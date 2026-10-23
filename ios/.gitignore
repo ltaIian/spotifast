@@ -1,0 +1,4 @@
+# Xcode's per-user state and local builds.
+xcuserdata/
+build/
+DerivedData/

@@ -185,13 +185,26 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          xcodebuild -project ios/Spotifast.xcodeproj -scheme Spotifast -configuration Debug \
-            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build/sim \
-            SPOTIFAST_RUST_LIB_DIR="$PWD/target/aarch64-apple-ios-sim/debug" \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO 2>&1 | tee out/xcodebuild-sim.log \
-            | grep -E 'error:|warning: .*(ld|link)|BUILD (SUCCEEDED|FAILED)|Undefined symbols|duplicate symbol|^ld: ' || true
-          grep -q 'BUILD SUCCEEDED' out/xcodebuild-sim.log
+          build() {
+            xcodebuild -project ios/Spotifast.xcodeproj -scheme Spotifast -configuration Debug \
+              -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+              -derivedDataPath build/sim \
+              SPOTIFAST_RUST_LIB_DIR="$PWD/target/aarch64-apple-ios-sim/debug" "$@" 2>&1 \
+              | tee -a out/xcodebuild-sim.log \
+              | grep -E 'error:|warning: .*(ld|link)|BUILD (SUCCEEDED|FAILED)|Undefined symbols|duplicate symbol|^ld: ' || true
+          }
+          # Signing ad hoc embeds the entitlements, so the Keychain works in
+          # the simulator. An unsigned build is the fallback; the .ipa for
+          # devices stays unsigned (scripts/build-ipa.sh).
+          : > out/xcodebuild-sim.log
+          build CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= CODE_SIGNING_REQUIRED=NO
+          if grep -q 'BUILD SUCCEEDED' out/xcodebuild-sim.log; then
+            echo "simulator app signed ad hoc" | tee out/sim-signing.txt
+          else
+            echo "ad-hoc signing failed; building unsigned" | tee out/sim-signing.txt
+            build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+            grep -q 'BUILD SUCCEEDED' out/xcodebuild-sim.log
+          fi
 
       # Launches the simulator app and records what it does: a screenshot,
       # the console, the system log, the app's own log and any crash report.
@@ -215,6 +228,8 @@ jobs:
                   print(phones[0]["udid"]); break
           ')
           echo "device: $device bundle: $bundle"
+          echo "$device" > out/sim-udid.txt
+          echo "$bundle" > out/sim-bundle.txt
           xcrun simctl list devices | grep "$device" | tee out/sim-device.txt
           xcrun simctl boot "$device"
           xcrun simctl bootstatus "$device" -b > /dev/null
@@ -240,6 +255,38 @@ jobs:
           cp ~/Library/Logs/DiagnosticReports/Spotifast* out/ 2>/dev/null || true
           xcrun simctl terminate "$device" "$bundle" || true
           grep -q '^running after' out/sim-status.txt
+
+      # Once the iOS entry point understands SPOTIFAST_SELFTEST=signin-web and
+      # signin-playback, it starts that sign-in flow at launch: the in-app
+      # Safari sheet should show Spotify's authorization page for each
+      # client. Diagnostics only; nothing is typed and nobody signs in.
+      - name: Simulator sign-in sheet
+        id: signin
+        if: steps.smoke.outcome == 'success'
+        continue-on-error: true
+        run: |
+          if ! grep -rqs 'signin-web' src/ios; then
+            echo "the iOS entry point has no sign-in self-test yet" | tee out/sim-signin.txt
+            exit 0
+          fi
+          device=$(cat out/sim-udid.txt)
+          bundle=$(cat out/sim-bundle.txt)
+          for flow in signin-web signin-playback; do
+            SIMCTL_CHILD_SPOTIFAST_SELFTEST=$flow SIMCTL_CHILD_RUST_BACKTRACE=1 \
+              xcrun simctl launch --console-pty --terminate-running-process "$device" "$bundle" > "out/sim-$flow-console.log" 2>&1 &
+            sleep 20
+            xcrun simctl io "$device" screenshot "out/sim-$flow-20s.png" || true
+            sleep 25
+            xcrun simctl io "$device" screenshot "out/sim-$flow-45s.png" || true
+            xcrun simctl terminate "$device" "$bundle" || true
+            sleep 3
+          done
+          data=$(xcrun simctl get_app_container "$device" "$bundle" data 2>/dev/null || true)
+          if [ -n "$data" ]; then
+            mkdir -p out/sim-container-signin
+            find "$data" -maxdepth 5 -name '*.log' -size -2M -exec cp {} out/sim-container-signin/ \;
+          fi
+          xcrun simctl spawn "$device" log show --last 3m --style compact --predicate 'process == "Spotifast"' > out/sim-signin-oslog.txt 2>&1 || true
 
       - name: build-ipa.sh (device, release)
         id: ipa
@@ -284,7 +331,8 @@ jobs:
             echo "- cargo check (library): ${{ steps.check.outcome }}"
             echo "- static library (spotifast-ios): ${{ steps.staticlib.outcome }}"
             echo "- xcodebuild (simulator): ${{ steps.xcode.outcome }}"
-            echo "- simulator smoke test: ${{ steps.smoke.outcome }}"
+            echo "- simulator smoke test: ${{ steps.smoke.outcome }} ($(cat out/sim-signing.txt 2>/dev/null))"
+            echo "- simulator sign-in sheet: ${{ steps.signin.outcome }}"
             echo "- build-ipa.sh: ${{ steps.ipa.outcome }}"
             echo "### Did not compile"
             cat out/could-not-compile-${{ matrix.target }}.txt 2>/dev/null

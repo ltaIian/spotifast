@@ -265,6 +265,28 @@ pub const MINI_BAR_HEIGHT: f32 = 64.0;
 /// The least side of a control meant for a finger, Apple's 44 points.
 pub const TOUCH_TARGET: f32 = 44.0;
 
+/// The room a control drawn `size` big takes: its own size for a pointer,
+/// and at least [`TOUCH_TARGET`] each way for a finger, with the control
+/// drawn in the middle of it. [`touch_target`] allocates it.
+pub fn touch_room(ctx: &egui::Context, size: Vec2) -> Vec2 {
+    if touch(ctx) {
+        size.max(Vec2::splat(TOUCH_TARGET))
+    } else {
+        size
+    }
+}
+
+/// Allocates [`touch_room`] for a control drawn `size` big. Returns the
+/// rect to draw it in, centred in the room, and the room's response.
+pub fn touch_target(ui: &mut egui::Ui, size: Vec2, sense: Sense) -> (egui::Rect, Response) {
+    let room = touch_room(ui.ctx(), size);
+    let (outer, response) = ui.allocate_exact_size(room, sense);
+    if room == size {
+        return (outer, response);
+    }
+    (egui::Rect::from_center_size(outer.center(), size), response)
+}
+
 /// Whether this is the iPhone build, or a desktop demo previewing it
 /// (`--demo-show ios`): the one switch for hiding what iOS does not have.
 pub fn is_ios() -> bool {
@@ -689,6 +711,7 @@ pub fn icon_button_edge(ui: &egui::Ui, size: f32) -> f32 {
         return edge;
     }
     (size + TOUCH_ICON_BUTTON_PAD)
+        .max(TOUCH_TARGET)
         .min(ui.available_size().min_elem())
         .max(edge)
 }
@@ -849,7 +872,7 @@ pub fn pill_button(ui: &mut egui::Ui, palette: &Palette, label: &str, primary: b
     let galley = ui.painter().layout_no_wrap(label.to_string(), font, color);
     let padding = Vec2::new(18.0, 8.0);
     let size = galley.size() + padding * 2.0;
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let (rect, response) = touch_target(ui, size, Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
@@ -923,7 +946,7 @@ fn soft_button_inner(
     let icon_width = if icon.is_some() { icon_size + 6.0 } else { 0.0 };
     let padding = Vec2::new(12.0, 7.0);
     let size = Vec2::new(galley.size().x + icon_width, galley.size().y) + padding * 2.0;
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let (rect, response) = touch_target(ui, size, Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });

@@ -133,7 +133,7 @@ fn badge(
     } else {
         Vec2::splat(height)
     };
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let (rect, response) = theme::touch_target(ui, size, Sense::click());
     // Collapsed to its icon the badge has no text on screen, so its label
     // reaches a screen reader as the widget's name.
     response.widget_info(|| {

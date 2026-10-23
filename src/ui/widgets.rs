@@ -3384,7 +3384,7 @@ pub fn search_field(
         let clear_size = 15.0;
         let clear_rect = Rect::from_center_size(
             pos2(rect.right() - 17.0, rect.center().y),
-            Vec2::splat(clear_size + theme::ICON_BUTTON_PAD),
+            theme::touch_room(ui.ctx(), Vec2::splat(clear_size + theme::ICON_BUTTON_PAD)),
         );
         let mut clear = ui.new_child(
             UiBuilder::new()
@@ -3417,7 +3417,7 @@ pub fn switch(ui: &mut Ui, palette: &Palette, label: &str, on: &mut bool) -> egu
         vec2(40.0, 22.0)
     };
     let knob = if touch { 13.5 } else { 8.0 };
-    let (rect, mut response) = ui.allocate_exact_size(size, Sense::click());
+    let (rect, mut response) = theme::touch_target(ui, size, Sense::click());
     if response.clicked() {
         *on = !*on;
         response.mark_changed();

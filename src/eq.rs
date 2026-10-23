@@ -768,7 +768,7 @@ impl Processor {
     }
 
     /// One frame through the preamp and the bands.
-    fn filter_frame(&mut self, frame: &mut [f64]) {
+    fn filter_frame(&mut self, frame: &mut [f64; CHANNELS]) {
         if self.ramp > 0 {
             self.advance();
         } else if self.tail > 0 {
@@ -793,7 +793,8 @@ impl Processor {
         if !self.shaping && !placing {
             return;
         }
-        for frame in samples.chunks_exact_mut(CHANNELS) {
+        let (frames, _) = samples.as_chunks_mut::<CHANNELS>();
+        for frame in frames {
             if self.shaping {
                 self.filter_frame(frame);
             }

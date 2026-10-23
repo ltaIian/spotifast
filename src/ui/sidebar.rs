@@ -88,6 +88,12 @@ fn cover_play_button(
     parent: &egui::Response,
     current_context: bool,
 ) -> bool {
+    // On a touch screen the cover is part of the row, and a tap on it opens
+    // the playlist like a tap anywhere else on the row: a finger cannot
+    // hover to find the control first.
+    if theme::touch(ui.ctx()) {
+        return false;
+    }
     let Some(uri) = entry_play_uri(app, entry) else {
         return false;
     };
@@ -101,28 +107,6 @@ fn cover_play_button(
         Sense::click(),
     );
     let play_hover = play.hovered();
-    let touch = theme::touch(ui.ctx());
-    if touch && !play_hover && !parent.hovered() {
-        // Without hover the control shows as a small disc in the corner.
-        let disc = Rect::from_center_size(
-            cover_rect.right_bottom() - Vec2::splat(10.0),
-            Vec2::splat(18.0),
-        );
-        ui.painter()
-            .circle_filled(disc.center(), 9.0, egui::Color32::from_black_alpha(150));
-        let icon = if playing {
-            Icon::PauseFilled
-        } else {
-            Icon::PlayFilled
-        };
-        icon.image(egui::Color32::WHITE, 9.0).paint_at(
-            ui,
-            Rect::from_center_size(
-                disc.center() + theme::play_glyph_offset(icon, 9.0),
-                Vec2::splat(9.0),
-            ),
-        );
-    }
     if play_hover || parent.hovered() {
         let radius = if entry.round {
             (cover_rect.width() / 2.0).min(127.0) as u8
@@ -405,16 +389,21 @@ fn sort_menu(app: &mut App, ui: &mut egui::Ui, shelf: Filter, selected: LibraryS
         .find(|(sort, _)| *sort == selected)
         .expect("sort label")
         .1;
-    let response = ui.add(
-        egui::Button::image_and_text(
-            Icon::ChevronDown.image(app.palette.text, 15.0),
-            egui::RichText::new(label.as_ref()).font(theme::medium(13.0)),
+    // On a touch screen it is a chip like the filters above it.
+    let response = if theme::touch(ui.ctx()) {
+        theme::soft_button(ui, &app.palette, Some(Icon::ChevronDown), label, false)
+    } else {
+        ui.add(
+            egui::Button::image_and_text(
+                Icon::ChevronDown.image(app.palette.text, 15.0),
+                egui::RichText::new(label.as_ref()).font(theme::medium(13.0)),
+            )
+            .wrap()
+            .fill(app.palette.surface)
+            .corner_radius(12)
+            .min_size(vec2(0.0, 28.0)),
         )
-        .wrap()
-        .fill(app.palette.surface)
-        .corner_radius(12)
-        .min_size(vec2(0.0, 28.0)),
-    );
+    };
     egui::Popup::menu(&response)
         .frame(super::widgets::menu_frame(&app.palette))
         .show(|ui| {

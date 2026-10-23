@@ -175,7 +175,7 @@ fn mini_bar(app: &mut App, ui: &mut egui::Ui) {
                 )
             });
             if open.clicked() {
-                super::set_now_playing_open(ui.ctx(), true);
+                super::open_now_playing(app, ui.ctx());
             }
             let cy = rect.center().y;
             let cover = Rect::from_center_size(pos2(rect.left() + 22.0, cy), Vec2::splat(44.0));

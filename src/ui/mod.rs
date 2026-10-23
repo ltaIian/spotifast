@@ -217,7 +217,13 @@ fn compact_surface(app: &App, ctx: &Context) -> Surface {
 /// page, and the player bar shrinks to one row that opens that view.
 fn compact_layout(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
-    let surface = compact_surface(app, &ctx);
+    // A new page, however it came, is shown with nothing laid over it.
+    let surface = if page_changed(app, &ctx) {
+        close_overlays(app, &ctx);
+        Surface::Page
+    } else {
+        compact_surface(app, &ctx)
+    };
     if surface != Surface::NowPlaying {
         player_bar::show(app, ui);
     }
@@ -231,32 +237,70 @@ fn compact_layout(app: &mut App, ui: &mut egui::Ui) {
         Surface::Library => sidebar::show(app, ui),
         Surface::Page => central(app, ui),
     }
-    // Opening a page from a screen laid over the page shows the page.
+    // Going to a page from a screen laid over the page shows the page.
     if app.actions[before..].iter().any(navigates) {
-        close_surface(app, &ctx, surface);
+        close_overlays(app, &ctx);
     }
+}
+
+/// Where the compact layout keeps the page it showed last.
+const SHOWN_PAGE_ID: &str = "compact-shown-page";
+
+/// Whether the page is another than the one the compact layout showed the
+/// frame before, whatever changed it.
+fn page_changed(app: &App, ctx: &Context) -> bool {
+    let page = Id::new(app.page());
+    let id = Id::new(SHOWN_PAGE_ID);
+    let shown = ctx.data(|data| data.get_temp::<Id>(id));
+    if shown != Some(page) {
+        ctx.data_mut(|data| data.insert_temp(id, page));
+    }
+    shown.is_some_and(|shown| shown != page)
 }
 
 /// Whether an action goes to a page.
 fn navigates(action: &Action) -> bool {
-    matches!(action, Action::Open(_) | Action::FocusSearch)
+    matches!(
+        action,
+        Action::Open(_) | Action::FocusSearch | Action::Back | Action::Forward
+    )
 }
 
-/// Takes a surface laid over the page away, the way its own close button
-/// does.
-fn close_surface(app: &mut App, ctx: &Context, surface: Surface) {
-    let toggle = match surface {
-        Surface::Queue => Action::ToggleQueuePanel,
-        Surface::Lyrics => Action::ToggleLyricsPanel,
-        Surface::Friends => Action::ToggleFriendsPanel,
-        Surface::NowPlaying => return set_now_playing_open(ctx, false),
-        Surface::Library => return set_library_open(ctx, false),
-        Surface::Page | Surface::LyricsFullscreen => return,
-    };
-    // Its own close button may have asked already this frame.
-    let same = |action: &Action| std::mem::discriminant(action) == std::mem::discriminant(&toggle);
-    if !app.actions.iter().any(same) {
-        app.actions.push(toggle);
+/// Takes every screen laid over the page away: the library, the playing
+/// song's view, the right-hand panels and the lyrics' full screen.
+fn close_overlays(app: &mut App, ctx: &Context) {
+    set_library_open(ctx, false);
+    set_now_playing_open(ctx, false);
+    close_panels(app);
+}
+
+/// Opens the playing song's view, as the player bar does when tapped. A
+/// right-hand panel laid over the page closes, so the view shows at once
+/// rather than once the panel is closed some other way.
+pub(crate) fn open_now_playing(app: &mut App, ctx: &Context) {
+    close_panels(app);
+    set_now_playing_open(ctx, true);
+}
+
+/// Closes the right-hand panels and the lyrics' full screen, through the
+/// actions their own close buttons send.
+fn close_panels(app: &mut App) {
+    let open = [
+        (app.show_queue_panel, Action::ToggleQueuePanel),
+        (app.show_lyrics_panel, Action::ToggleLyricsPanel),
+        (app.show_friends_panel, Action::ToggleFriendsPanel),
+        (
+            app.lyrics_fullscreen.is_some(),
+            Action::SetLyricsFullscreen(false),
+        ),
+    ];
+    for (shown, close) in open {
+        // Its own close button may have asked already this frame.
+        let kind = std::mem::discriminant(&close);
+        let same = |action: &Action| std::mem::discriminant(action) == kind;
+        if shown && !app.actions.iter().any(same) {
+            app.actions.push(close);
+        }
     }
 }
 

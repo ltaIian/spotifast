@@ -2597,18 +2597,18 @@ pub(super) fn eq_slider(
     use egui::{Rect, Stroke, pos2, vec2};
     let range = crate::eq::RANGE_DB;
     let width = eq_slider_width(ui.ctx());
+    let touch = theme::touch(ui.ctx());
     ui.vertical(|ui| {
-        let (rect, response) =
-            ui.allocate_exact_size(vec2(width, 118.0), egui::Sense::click_and_drag());
+        let (rect, response) = ui.allocate_exact_size(vec2(width, 118.0), slider_sense(touch));
         let track = Rect::from_center_size(rect.center(), vec2(4.0, rect.height() - 20.0));
         let y_of = |db: f32| track.bottom() - (db + range) / (2.0 * range) * track.height();
+        let at = pos2(track.center().x, y_of(*value));
+        let grip = touch.then(|| slider_grip(ui, &response, at));
         let mut changed = false;
         if response.double_clicked() {
             *value = 0.0;
             changed = true;
-        } else if (response.dragged() || response.clicked())
-            && let Some(pos) = response.interact_pointer_pos()
-        {
+        } else if let Some(pos) = slider_pointer(&response, grip.as_ref()) {
             let db = (track.bottom() - pos.y) / track.height() * 2.0 * range - range;
             let db = (db.clamp(-range, range) * 10.0).round() / 10.0;
             if db != *value {
@@ -2633,7 +2633,8 @@ pub(super) fn eq_slider(
             );
             let handle = pos2(track.center().x, y_of(*value));
             painter.circle_filled(handle, 7.0, palette.text);
-            if response.hovered() || response.dragged() {
+            let dragged = response.dragged() || grip.as_ref().is_some_and(egui::Response::dragged);
+            if response.hovered() || dragged {
                 painter.text(
                     pos2(track.center().x, rect.top() + 2.0),
                     egui::Align2::CENTER_TOP,
@@ -2658,6 +2659,34 @@ pub(super) fn eq_slider(
 
 /// The step the equalizer's horizontal sliders move in.
 const EQ_BAR_STEP: f32 = 0.5;
+
+/// What an equalizer slider's track senses. On a touch screen only its
+/// handle takes a drag, as a `UISlider`'s thumb does, so a swipe that
+/// starts anywhere else on the track scrolls the page; a tap still sets it.
+fn slider_sense(touch: bool) -> egui::Sense {
+    if touch {
+        egui::Sense::click()
+    } else {
+        egui::Sense::click_and_drag()
+    }
+}
+
+/// The finger-sized square around a touch slider's handle at `handle`, the
+/// one part of the slider that takes a drag.
+fn slider_grip(ui: &egui::Ui, track: &egui::Response, handle: egui::Pos2) -> egui::Response {
+    let rect = egui::Rect::from_center_size(handle, Vec2::splat(theme::TOUCH_TARGET));
+    ui.interact(rect, track.id.with("grip"), egui::Sense::drag())
+}
+
+/// Where a slider takes its value from this frame: the pointer while it is
+/// dragged, by its handle on a touch screen, or where it was clicked.
+fn slider_pointer(track: &egui::Response, grip: Option<&egui::Response>) -> Option<egui::Pos2> {
+    match grip {
+        Some(grip) if grip.dragged() => grip.interact_pointer_pos(),
+        _ if track.dragged() || track.clicked() => track.interact_pointer_pos(),
+        _ => None,
+    }
+}
 
 /// A gain as the equalizer's sliders say it: "0 dB" at rest, a sign before
 /// any other value, and a tenth only where there is one.
@@ -2701,19 +2730,21 @@ pub(super) fn eq_bar_slider(
     let text_rect = Rect::from_min_size(rect.min, vec2(width, text_height));
     let track_rect = Rect::from_min_max(pos2(rect.left(), text_rect.bottom()), rect.max);
     let id = ui.make_persistent_id(("eq-bar-slider", label));
-    let response = ui.interact(track_rect, id, egui::Sense::click_and_drag());
+    let touch = theme::touch(ui.ctx());
+    let response = ui.interact(track_rect, id, slider_sense(touch));
     // The handle's radius in from each end, so it stays on the track.
     let bar = Rect::from_center_size(
         track_rect.center(),
         vec2((track_rect.width() - 14.0).max(1.0), 4.0),
     );
+    let x_of = |db: f32| bar.left() + (db - low) / (high - low) * bar.width();
+    let at = pos2(x_of(*value), bar.center().y);
+    let grip = touch.then(|| slider_grip(ui, &response, at));
     let snap = |db: f32| ((db / EQ_BAR_STEP).round() * EQ_BAR_STEP).clamp(low, high);
     let before = *value;
     if response.double_clicked() {
         *value = 0.0_f32.clamp(low, high);
-    } else if (response.dragged() || response.clicked())
-        && let Some(pos) = response.interact_pointer_pos()
-    {
+    } else if let Some(pos) = slider_pointer(&response, grip.as_ref()) {
         let fraction = ((pos.x - bar.left()) / bar.width()).clamp(0.0, 1.0);
         *value = snap(low + fraction * (high - low));
     }
@@ -2772,7 +2803,6 @@ pub(super) fn eq_bar_slider(
     });
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
-        let x_of = |db: f32| bar.left() + (db - low) / (high - low) * bar.width();
         painter.rect_filled(bar, 2.0, palette.surface_active);
         let zero = x_of(0.0_f32.clamp(low, high));
         let at = x_of(*value);
@@ -3144,6 +3174,99 @@ mod tests {
         assert_eq!(boost, crate::eq::BASS_BOOST_MAX_DB);
         frame(&mut boost, set(-3.0));
         assert_eq!(boost, 0.0);
+    }
+
+    /// On a phone an equalizer slider moves only by its handle, as a
+    /// `UISlider` does: a swipe that starts elsewhere on its track leaves
+    /// the gain alone, so the page under it can scroll.
+    #[test]
+    fn a_phone_equalizer_slider_moves_only_by_its_handle() {
+        use egui::{Event, pos2};
+        struct Preview;
+        impl Drop for Preview {
+            fn drop(&mut self) {
+                crate::theme::preview_ios(false);
+            }
+        }
+        crate::theme::preview_ios(true);
+        let _preview = Preview;
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let palette = crate::theme::Palette::dark();
+        let button = |pos, pressed| Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        // Bass boost, then a band under it. Returns where each starts.
+        let frame = |boost: &mut f32, gain: &mut f32, events: Vec<Event>| {
+            let mut starts = (egui::Pos2::ZERO, egui::Pos2::ZERO);
+            let input = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                starts.0 = ui.cursor().min;
+                let range = 0.0..=crate::eq::BASS_BOOST_MAX_DB;
+                super::eq_bar_slider(ui, &palette, "Bass boost", boost, range, true, 300.0);
+                starts.1 = ui.cursor().min;
+                super::eq_slider(ui, &palette, "60", gain, true);
+            });
+            output.textures_delta.clear();
+            starts
+        };
+        let swipe = |boost: &mut f32, gain: &mut f32, from: egui::Pos2, to: egui::Pos2| {
+            frame(boost, gain, vec![Event::PointerMoved(from)]);
+            frame(boost, gain, vec![button(from, true)]);
+            for step in 1..=4 {
+                let at = from + (to - from) * (step as f32 / 4.0);
+                frame(boost, gain, vec![Event::PointerMoved(at)]);
+            }
+            frame(boost, gain, vec![button(to, false)]);
+        };
+        let (mut boost, mut gain) = (0.0, 0.0);
+        let (bar, band) = frame(&mut boost, &mut gain, vec![]);
+        // The bar's 44-point track lies under its 18-point label, with the
+        // handle 7 points in from the left at 0 dB. The band's handle sits
+        // halfway down its 118-point column at 0 dB.
+        let track = bar.y + 18.0 + 22.0;
+        let column = band.x + 22.0;
+        let on_bar = pos2(bar.x + 200.0, track);
+        swipe(
+            &mut boost,
+            &mut gain,
+            on_bar,
+            on_bar + egui::vec2(0.0, 120.0),
+        );
+        let on_band = pos2(column, band.y + 100.0);
+        swipe(
+            &mut boost,
+            &mut gain,
+            on_band,
+            on_band + egui::vec2(0.0, 100.0),
+        );
+        assert_eq!(
+            (boost, gain),
+            (0.0, 0.0),
+            "a swipe on a track moves nothing"
+        );
+        let handle = pos2(bar.x + 7.0, track);
+        swipe(
+            &mut boost,
+            &mut gain,
+            handle,
+            handle + egui::vec2(140.0, 0.0),
+        );
+        assert!(boost > 0.0, "the bar moves by its handle");
+        let handle = pos2(column, band.y + 59.0);
+        swipe(
+            &mut boost,
+            &mut gain,
+            handle,
+            handle - egui::vec2(0.0, 40.0),
+        );
+        assert!(gain > 0.0, "the band moves by its handle");
     }
 
     #[test]

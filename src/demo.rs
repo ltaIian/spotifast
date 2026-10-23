@@ -1643,6 +1643,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
             "settings-equalizer" => crate::ui::settings::demo_scroll_to_equalizer(),
             // The equalizer page scrolled to its bands.
             "equalizer-end" => crate::ui::equalizer::demo_scroll_to_end(),
+            // Search before anything is searched: the recent searches.
+            "search-history" => {
+                app.search.query.clear();
+                app.search.committed.clear();
+            }
             _ => {}
         }
     }
@@ -7704,16 +7709,37 @@ mod tests {
         out
     }
 
-    /// What a frame draws outside `content`, other than plain rectangles:
-    /// the fills behind a phone's status bar and home indicator, and the
-    /// shadows and backdrops that may reach under them.
-    fn painted_outside(output: &egui::FullOutput, content: egui::Rect) -> Vec<String> {
+    /// What a frame on `screen` draws outside `content`. Only three things
+    /// may reach there: plain fills, with no outline and no picture, that
+    /// stay inside the band a phone's status bar or home indicator covers or
+    /// cover the whole screen, as the backdrop behind the safe area does;
+    /// and blurred shadows.
+    fn painted_outside(
+        output: &egui::FullOutput,
+        screen: egui::Rect,
+        content: egui::Rect,
+    ) -> Vec<String> {
+        let top = egui::Rect::from_min_max(screen.min, egui::pos2(screen.right(), content.top()));
+        let bottom =
+            egui::Rect::from_min_max(egui::pos2(screen.left(), content.bottom()), screen.max);
+        let fits = |painted: egui::Rect| {
+            painted.contains_rect(screen.shrink(0.5))
+                || top.expand(0.5).contains_rect(painted)
+                || bottom.expand(0.5).contains_rect(painted)
+        };
+        let allowed = |shape: &egui::Shape, painted: egui::Rect| match shape {
+            egui::Shape::Rect(rect) if rect.blur_width > 0.0 => true,
+            egui::Shape::Rect(rect) => {
+                rect.brush.is_none() && rect.stroke.is_empty() && fits(painted)
+            }
+            _ => false,
+        };
         painted_shapes(output)
             .into_iter()
-            .filter(|(shape, _)| !matches!(shape, egui::Shape::Rect(_)))
             .filter_map(|(shape, clip)| {
                 let painted = shape.visual_bounding_rect().intersect(clip);
-                (painted.is_positive() && !content.expand(0.5).contains_rect(painted))
+                let inside = content.expand(0.5).contains_rect(painted);
+                (painted.is_positive() && !inside && !allowed(&shape, painted))
                     .then(|| format!("{painted:?}: {shape:?}"))
             })
             .collect()
@@ -7721,7 +7747,8 @@ mod tests {
 
     /// On a phone, with the status bar around a Dynamic Island above and
     /// the home indicator below, every page, screen and dialog lays out
-    /// inside the safe area. Only plain fills reach under the bars.
+    /// inside the safe area. Only plain fills reach under the bars, and
+    /// shadows.
     #[test]
     fn every_surface_renders_on_a_phone() {
         // Drawn as the iPhone build, until the test ends however it ends.
@@ -7772,7 +7799,8 @@ mod tests {
             frame_sized(&ctx, app, size, insets);
             let output = frame_sized(&ctx, app, size, insets);
             assert_eq!(ctx.content_rect(), content, "{what}");
-            let outside = painted_outside(&output, content);
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            let outside = painted_outside(&output, screen, content);
             assert!(
                 outside.is_empty(),
                 "{what} draws outside the safe area: {outside:#?}"
@@ -7802,6 +7830,8 @@ mod tests {
             assert_eq!(app.page(), &page);
         }
         app.open(Page::Home);
+        // A new page comes bare: lay the screens over it once it is shown.
+        frame_sized(&ctx, &mut app, size, insets);
         crate::ui::set_library_open(&ctx, true);
         check(&mut app, "the library");
         crate::ui::set_library_open(&ctx, false);
@@ -7842,6 +7872,99 @@ mod tests {
         app.auth = AuthStatus::SignedOut;
         app.user = None;
         check(&mut app, "the sign-in card");
+        app.backend.shutdown();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// On a phone a new page comes with nothing laid over it, however it
+    /// was reached, and a tap on the player bar over a right-hand panel
+    /// shows the playing song's view at once, in the panel's place.
+    #[test]
+    fn a_phone_clears_what_lies_over_a_new_page() {
+        struct Preview;
+        impl Drop for Preview {
+            fn drop(&mut self) {
+                crate::theme::preview_ios(false);
+            }
+        }
+        crate::theme::preview_ios(true);
+        let _preview = Preview;
+        let root =
+            std::env::temp_dir().join(format!("spotifast-phone-overlays-{}", std::process::id()));
+        let dirs = AppDirs {
+            config: root.join("config"),
+            state: root.join("state"),
+            cache: root.join("cache"),
+        };
+        let ctx = egui::Context::default();
+        let waker = crate::backend::Waker::default();
+        waker.attach(&ctx);
+        let mut app = App::new(
+            &waker,
+            dirs,
+            Settings::default(),
+            AppOptions {
+                media_controls: false,
+                restore_sign_in: false,
+                tray: false,
+                autostart: false,
+            },
+        );
+        app.attach(&ctx);
+        populate(&mut app);
+        app.reveal_theme_changes = false;
+        let insets = egui::epaint::MarginF32 {
+            left: 0.0,
+            right: 0.0,
+            top: 59.0,
+            bottom: 34.0,
+        };
+        let draw = |app: &mut App, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(390.0, 844.0),
+                )),
+                safe_area_insets: Some(egui::SafeAreaInsets(insets)),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| app.frame_ui(ui));
+            output.textures_delta.clear();
+        };
+        app.open(Page::Home);
+        draw(&mut app, vec![]);
+        app.show_queue_panel = true;
+        crate::ui::set_library_open(&ctx, true);
+        crate::ui::set_now_playing_open(&ctx, true);
+        draw(&mut app, vec![]);
+        // A page reached without a tap on any of them.
+        app.open(Page::Settings);
+        draw(&mut app, vec![]);
+        draw(&mut app, vec![]);
+        assert!(!app.show_queue_panel, "the queue stays over the new page");
+        assert!(!crate::ui::library_open(&ctx), "the library stays");
+        assert!(!crate::ui::now_playing_open(&ctx), "the playing song stays");
+
+        app.show_lyrics_panel = true;
+        draw(&mut app, vec![]);
+        draw(&mut app, vec![]);
+        // The middle of the player bar, above the home indicator.
+        let bar = egui::pos2(150.0, 778.0);
+        let button = |pressed| egui::Event::PointerButton {
+            pos: bar,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        draw(&mut app, vec![egui::Event::PointerMoved(bar), button(true)]);
+        draw(&mut app, vec![button(false)]);
+        draw(&mut app, vec![]);
+        assert!(
+            !app.show_lyrics_panel,
+            "the lyrics stay over the playing song"
+        );
+        assert!(crate::ui::now_playing_open(&ctx));
         app.backend.shutdown();
         let _ = std::fs::remove_dir_all(root);
     }

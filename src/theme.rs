@@ -255,13 +255,37 @@ pub fn titlebar_inset(ctx: &egui::Context) -> f32 {
 }
 
 /// Below this width the interface takes its compact, one-column layout: a
-/// phone's, or a desktop window as narrow as one.
+/// phone's, or a window as narrow as one. It is measured before the
+/// interface's zoom, so zooming a desktop window in never turns it into a
+/// phone: the desktop's 760-point floor stays above it at any zoom.
 pub const COMPACT_WIDTH: f32 = 600.0;
 /// The player bar of the compact layout: one row, the cover, the song and
 /// its two most used controls.
 pub const MINI_BAR_HEIGHT: f32 = 64.0;
 /// The least side of a control meant for a finger, Apple's 44 points.
 pub const TOUCH_TARGET: f32 = 44.0;
+
+/// The room a control drawn `size` big takes: its own size for a pointer,
+/// and at least [`TOUCH_TARGET`] each way for a finger, with the control
+/// drawn in the middle of it. [`touch_target`] allocates it.
+pub fn touch_room(ctx: &egui::Context, size: Vec2) -> Vec2 {
+    if touch(ctx) {
+        size.max(Vec2::splat(TOUCH_TARGET))
+    } else {
+        size
+    }
+}
+
+/// Allocates [`touch_room`] for a control drawn `size` big. Returns the
+/// rect to draw it in, centred in the room, and the room's response.
+pub fn touch_target(ui: &mut egui::Ui, size: Vec2, sense: Sense) -> (egui::Rect, Response) {
+    let room = touch_room(ui.ctx(), size);
+    let (outer, response) = ui.allocate_exact_size(room, sense);
+    if room == size {
+        return (outer, response);
+    }
+    (egui::Rect::from_center_size(outer.center(), size), response)
+}
 
 /// Whether this is the iPhone build, or a desktop demo previewing it
 /// (`--demo-show ios`): the one switch for hiding what iOS does not have.
@@ -319,12 +343,12 @@ pub fn content_rect(ctx: &egui::Context) -> egui::Rect {
 const COMPACT_ID: &str = "compact-layout";
 
 /// Settles the layout of the frame about to be drawn: compact on iOS and in
-/// a window narrower than [`COMPACT_WIDTH`], with egui's own widgets, those
-/// in popups and menus too, sized to match. The main window runs it before
-/// it draws anything, and everything it then draws asks [`compact`] and
-/// [`touch`], so one frame never mixes the two layouts.
+/// a window narrower than [`COMPACT_WIDTH`] before zoom, with egui's own
+/// widgets, those in popups and menus too, sized to match. The main window
+/// runs it before it draws anything, and everything it then draws asks
+/// [`compact`] and [`touch`], so one frame never mixes the two layouts.
 pub fn settle_layout(ctx: &egui::Context) {
-    let compact = is_ios() || content_rect(ctx).width() < COMPACT_WIDTH;
+    let compact = is_ios() || content_rect(ctx).width() * ctx.zoom_factor() < COMPACT_WIDTH;
     let pass = ctx.cumulative_pass_nr();
     ctx.data_mut(|data| data.insert_temp(egui::Id::new(COMPACT_ID), (pass, compact)));
     let sized_for_touch = ctx.global_style().spacing.interact_size.y >= TOUCH_TARGET;
@@ -687,6 +711,7 @@ pub fn icon_button_edge(ui: &egui::Ui, size: f32) -> f32 {
         return edge;
     }
     (size + TOUCH_ICON_BUTTON_PAD)
+        .max(TOUCH_TARGET)
         .min(ui.available_size().min_elem())
         .max(edge)
 }
@@ -847,7 +872,7 @@ pub fn pill_button(ui: &mut egui::Ui, palette: &Palette, label: &str, primary: b
     let galley = ui.painter().layout_no_wrap(label.to_string(), font, color);
     let padding = Vec2::new(18.0, 8.0);
     let size = galley.size() + padding * 2.0;
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let (rect, response) = touch_target(ui, size, Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
@@ -889,7 +914,9 @@ pub fn soft_button(
 }
 
 /// A [`soft_button`] whose icon turns into a cross on hover, allowing the
-/// entry to be dismissed. The returned flag reports clicks on that cross.
+/// entry to be dismissed. A finger cannot hover, so on a touch screen the
+/// cross stands at the button's end instead, always shown, with a target of
+/// its own. The returned flag reports clicks on that cross.
 pub fn soft_button_dismiss(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -919,9 +946,17 @@ fn soft_button_inner(
     let galley = crate::bidi::layout_line(ui.painter(), label, font, color);
     let icon_size = 15.0;
     let icon_width = if icon.is_some() { icon_size + 6.0 } else { 0.0 };
+    let trailing_cross = dismissible && icon.is_some() && touch(ui.ctx());
+    let cross_size = 13.0;
+    let cross_width = if trailing_cross {
+        cross_size + 8.0
+    } else {
+        0.0
+    };
     let padding = Vec2::new(12.0, 7.0);
-    let size = Vec2::new(galley.size().x + icon_width, galley.size().y) + padding * 2.0;
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let content = galley.size().x + icon_width + cross_width;
+    let size = Vec2::new(content, galley.size().y) + padding * 2.0;
+    let (rect, response) = touch_target(ui, size, Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
@@ -929,13 +964,18 @@ fn soft_button_inner(
         egui::pos2(rect.left() + padding.x + icon_size / 2.0, rect.center().y),
         Vec2::splat(icon_size),
     );
+    let cross_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.right() - padding.x - cross_size / 2.0, rect.center().y),
+        Vec2::splat(cross_size),
+    );
     // Claimed after the button, so the cross sits on top and keeps its own click.
     let dismiss = (dismissible && icon.is_some()).then(|| {
-        let dismiss = ui.interact(
-            icon_rect.expand(3.0),
-            response.id.with("dismiss"),
-            Sense::click(),
-        );
+        let target = if trailing_cross {
+            egui::Rect::from_center_size(cross_rect.center(), Vec2::splat(TOUCH_TARGET))
+        } else {
+            icon_rect.expand(3.0)
+        };
+        let dismiss = ui.interact(target, response.id.with("dismiss"), Sense::click());
         dismiss.widget_info(|| {
             egui::WidgetInfo::labeled(
                 egui::WidgetType::Button,
@@ -961,7 +1001,7 @@ fn soft_button_inner(
         ui.painter().rect_filled(rect, rect.height() / 2.0, fill);
         let mut x = rect.left() + padding.x;
         if let Some(icon) = icon {
-            let icon = if dismiss.is_some() && hovered {
+            let icon = if dismiss.is_some() && hovered && !trailing_cross {
                 Icon::X
             } else {
                 icon
@@ -971,6 +1011,10 @@ fn soft_button_inner(
         }
         let pos = egui::pos2(x, rect.center().y - galley.size().y / 2.0);
         ui.painter().galley(pos, galley, color);
+        if trailing_cross {
+            let tint = if active { color } else { palette.secondary };
+            Icon::X.image(tint, cross_size).paint_at(ui, cross_rect);
+        }
     }
     focus_ring(ui, &response);
     if let Some(dismiss) = dismiss {
@@ -1461,6 +1505,36 @@ mod tests {
         assert_eq!(frame(600.0), (false, pointer));
         assert_eq!(frame(599.0), (true, Vec2::splat(TOUCH_TARGET)));
         assert_eq!(frame(1280.0), (false, pointer));
+    }
+
+    /// Zoom never makes a desktop window a phone: at its 760-point floor and
+    /// 150% zoom the window holds 507 zoomed points, and it keeps the
+    /// desktop's layout, title bar and buttons.
+    #[test]
+    fn a_zoomed_desktop_window_keeps_the_desktop_layout() {
+        let ctx = egui::Context::default();
+        apply(&ctx, &Palette::dark());
+        ctx.set_zoom_factor(1.5);
+        let mut seen = None;
+        for _ in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(760.0 / 1.5, 520.0 / 1.5),
+                )),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                settle_layout(ui.ctx());
+                seen = Some((ui.ctx().zoom_factor(), compact(ui.ctx())));
+            });
+            output.textures_delta.clear();
+        }
+        assert_eq!(seen, Some((1.5, false)));
+        assert_eq!(
+            ctx.global_style().spacing.interact_size,
+            Vec2::new(40.0, 28.0)
+        );
     }
 
     /// A previewed iPhone keeps a phone's safe area clear in a window that

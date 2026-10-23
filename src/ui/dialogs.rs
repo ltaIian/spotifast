@@ -501,7 +501,8 @@ fn edit_playlist(app: &mut App, ui: &mut egui::Ui) {
                             theme::regular(13.0),
                             palette.secondary,
                         );
-                    } else {
+                    } else if !theme::is_ios() {
+                        // An iPhone has no file dialog to choose a picture from.
                         if theme::pill_button(ui, &palette, &gettext(locale, "Change cover"), false)
                             .clicked()
                         {

@@ -313,7 +313,9 @@ const NOW_PLAYING_BELOW_COVER: f32 = 340.0;
 pub fn now_playing(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let tint = app.now_playing_tint();
-    let top = tint.map_or(palette.panel, |tint| super::blend(palette.panel, tint, 0.35));
+    let top = tint.map_or(palette.panel, |tint| {
+        super::blend(palette.panel, tint, 0.35)
+    });
     // The status bar's band above takes the colour the view starts with.
     if let Some(band) = super::status_bar_band(ui.ctx()) {
         let painter = ui.painter().with_clip_rect(band);

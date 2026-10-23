@@ -134,9 +134,8 @@ fn safe_area(ui: &mut egui::Ui, palette: &theme::Palette) -> egui::Ui {
 pub(crate) fn status_bar_band(ctx: &Context) -> Option<Rect> {
     let content = theme::content_rect(ctx);
     let viewport = ctx.viewport_rect();
-    (content.top() > viewport.top()).then(|| {
-        Rect::from_min_max(viewport.min, egui::pos2(viewport.right(), content.top()))
-    })
+    (content.top() > viewport.top())
+        .then(|| Rect::from_min_max(viewport.min, egui::pos2(viewport.right(), content.top())))
 }
 
 /// The band below the safe area that a phone's home indicator covers, if
@@ -144,9 +143,8 @@ pub(crate) fn status_bar_band(ctx: &Context) -> Option<Rect> {
 pub(crate) fn home_indicator_band(ctx: &Context) -> Option<Rect> {
     let content = theme::content_rect(ctx);
     let viewport = ctx.viewport_rect();
-    (content.bottom() < viewport.bottom()).then(|| {
-        Rect::from_min_max(egui::pos2(viewport.left(), content.bottom()), viewport.max)
-    })
+    (content.bottom() < viewport.bottom())
+        .then(|| Rect::from_min_max(egui::pos2(viewport.left(), content.bottom()), viewport.max))
 }
 
 /// What fills the screen above the player bar in the compact layout.

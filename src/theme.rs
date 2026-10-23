@@ -370,7 +370,6 @@ fn touch_spacing(spacing: &mut egui::style::Spacing) {
     spacing.menu_margin = egui::Margin::same(8);
 }
 
-
 pub fn regular(size: f32) -> egui::FontId {
     fastframe_fonts::Weight::Regular.font_id(size)
 }

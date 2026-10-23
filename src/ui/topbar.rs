@@ -766,7 +766,13 @@ fn offline(app: &App, ui: &mut egui::Ui) {
             egui::Color32::from_rgb(41, 121, 255)
         };
         ui.painter().circle_filled(rect.center(), 14.5, fill);
-        theme::paint_icon(ui, Icon::WifiOff, rect, ICON_BUTTON_ICON, egui::Color32::WHITE);
+        theme::paint_icon(
+            ui,
+            Icon::WifiOff,
+            rect,
+            ICON_BUTTON_ICON,
+            egui::Color32::WHITE,
+        );
     }
     response.on_hover_text(gettext(
         app.locale,

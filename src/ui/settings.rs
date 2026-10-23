@@ -2689,8 +2689,10 @@ pub(super) fn eq_bar_slider(
         24.0
     };
     let text_height = 18.0;
-    let (rect, _) =
-        ui.allocate_exact_size(vec2(width, text_height + track_height), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(width, text_height + track_height),
+        egui::Sense::hover(),
+    );
     let text_rect = Rect::from_min_size(rect.min, vec2(width, text_height));
     let track_rect = Rect::from_min_max(pos2(rect.left(), text_rect.bottom()), rect.max);
     let id = ui.make_persistent_id(("eq-bar-slider", label));
@@ -2787,8 +2789,7 @@ pub(super) fn eq_bar_slider(
         }
         painter.circle_filled(pos2(at, bar.center().y), 7.0, palette.text);
         let shown = gain_label(*value);
-        let value_galley =
-            painter.layout_no_wrap(shown, theme::regular(12.5), palette.secondary);
+        let value_galley = painter.layout_no_wrap(shown, theme::regular(12.5), palette.secondary);
         let value_width = value_galley.size().x;
         painter.galley(
             pos2(

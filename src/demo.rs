@@ -7685,11 +7685,7 @@ mod tests {
     /// The shapes a frame draws, `Shape::Vec`s opened up, each with the
     /// rect it is clipped to.
     fn painted_shapes(output: &egui::FullOutput) -> Vec<(egui::Shape, egui::Rect)> {
-        fn open(
-            shape: &egui::Shape,
-            clip: egui::Rect,
-            out: &mut Vec<(egui::Shape, egui::Rect)>,
-        ) {
+        fn open(shape: &egui::Shape, clip: egui::Rect, out: &mut Vec<(egui::Shape, egui::Rect)>) {
             match shape {
                 egui::Shape::Vec(shapes) => {
                     for shape in shapes {

@@ -255,7 +255,9 @@ pub fn titlebar_inset(ctx: &egui::Context) -> f32 {
 }
 
 /// Below this width the interface takes its compact, one-column layout: a
-/// phone's, or a desktop window as narrow as one.
+/// phone's, or a window as narrow as one. It is measured before the
+/// interface's zoom, so zooming a desktop window in never turns it into a
+/// phone: the desktop's 760-point floor stays above it at any zoom.
 pub const COMPACT_WIDTH: f32 = 600.0;
 /// The player bar of the compact layout: one row, the cover, the song and
 /// its two most used controls.
@@ -319,12 +321,12 @@ pub fn content_rect(ctx: &egui::Context) -> egui::Rect {
 const COMPACT_ID: &str = "compact-layout";
 
 /// Settles the layout of the frame about to be drawn: compact on iOS and in
-/// a window narrower than [`COMPACT_WIDTH`], with egui's own widgets, those
-/// in popups and menus too, sized to match. The main window runs it before
-/// it draws anything, and everything it then draws asks [`compact`] and
-/// [`touch`], so one frame never mixes the two layouts.
+/// a window narrower than [`COMPACT_WIDTH`] before zoom, with egui's own
+/// widgets, those in popups and menus too, sized to match. The main window
+/// runs it before it draws anything, and everything it then draws asks
+/// [`compact`] and [`touch`], so one frame never mixes the two layouts.
 pub fn settle_layout(ctx: &egui::Context) {
-    let compact = is_ios() || content_rect(ctx).width() < COMPACT_WIDTH;
+    let compact = is_ios() || content_rect(ctx).width() * ctx.zoom_factor() < COMPACT_WIDTH;
     let pass = ctx.cumulative_pass_nr();
     ctx.data_mut(|data| data.insert_temp(egui::Id::new(COMPACT_ID), (pass, compact)));
     let sized_for_touch = ctx.global_style().spacing.interact_size.y >= TOUCH_TARGET;
@@ -1461,6 +1463,33 @@ mod tests {
         assert_eq!(frame(600.0), (false, pointer));
         assert_eq!(frame(599.0), (true, Vec2::splat(TOUCH_TARGET)));
         assert_eq!(frame(1280.0), (false, pointer));
+    }
+
+    /// Zoom never makes a desktop window a phone: at its 760-point floor and
+    /// 150% zoom the window holds 507 zoomed points, and it keeps the
+    /// desktop's layout, title bar and buttons.
+    #[test]
+    fn a_zoomed_desktop_window_keeps_the_desktop_layout() {
+        let ctx = egui::Context::default();
+        apply(&ctx, &Palette::dark());
+        ctx.set_zoom_factor(1.5);
+        let mut seen = None;
+        for _ in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(760.0 / 1.5, 520.0 / 1.5),
+                )),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                settle_layout(ui.ctx());
+                seen = Some((ui.ctx().zoom_factor(), compact(ui.ctx())));
+            });
+            output.textures_delta.clear();
+        }
+        assert_eq!(seen, Some((1.5, false)));
+        assert_eq!(ctx.global_style().spacing.interact_size, Vec2::new(40.0, 28.0));
     }
 
     /// A previewed iPhone keeps a phone's safe area clear in a window that

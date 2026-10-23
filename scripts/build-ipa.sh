@@ -15,7 +15,8 @@
 #   3. the archive's Spotifast.app put in Payload/ and zipped as the .ipa.
 #
 # BUNDLE_ID sets the bundle identifier (default com.placeholder.spotifast).
-# The archive and Xcode's intermediate files go in build/ios/.
+# The archive and Xcode's intermediate files go in ios-ipa/ in cargo's target
+# directory (target/ unless configured otherwise).
 set -euo pipefail
 
 die() {
@@ -79,7 +80,7 @@ bundle_id=${BUNDLE_ID:-com.placeholder.spotifast}
     die "BUNDLE_ID '$bundle_id' is not a bundle identifier (letters, digits and hyphens between dots, like com.example.spotifast)"
 
 lib_dir=$target_dir/$target/release
-work=$repo/build/ios
+work=$target_dir/ios-ipa
 archive=$work/Spotifast.xcarchive
 ipa=$repo/dist/Spotifast-$version-ios-unsigned.ipa
 

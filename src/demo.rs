@@ -7802,6 +7802,8 @@ mod tests {
             assert_eq!(app.page(), &page);
         }
         app.open(Page::Home);
+        // A new page comes bare: lay the screens over it once it is shown.
+        frame_sized(&ctx, &mut app, size, insets);
         crate::ui::set_library_open(&ctx, true);
         check(&mut app, "the library");
         crate::ui::set_library_open(&ctx, false);
@@ -7842,6 +7844,96 @@ mod tests {
         app.auth = AuthStatus::SignedOut;
         app.user = None;
         check(&mut app, "the sign-in card");
+        app.backend.shutdown();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// On a phone a new page comes with nothing laid over it, however it
+    /// was reached, and a tap on the player bar over a right-hand panel
+    /// shows the playing song's view at once, in the panel's place.
+    #[test]
+    fn a_phone_clears_what_lies_over_a_new_page() {
+        struct Preview;
+        impl Drop for Preview {
+            fn drop(&mut self) {
+                crate::theme::preview_ios(false);
+            }
+        }
+        crate::theme::preview_ios(true);
+        let _preview = Preview;
+        let root =
+            std::env::temp_dir().join(format!("spotifast-phone-overlays-{}", std::process::id()));
+        let dirs = AppDirs {
+            config: root.join("config"),
+            state: root.join("state"),
+            cache: root.join("cache"),
+        };
+        let ctx = egui::Context::default();
+        let waker = crate::backend::Waker::default();
+        waker.attach(&ctx);
+        let mut app = App::new(
+            &waker,
+            dirs,
+            Settings::default(),
+            AppOptions {
+                media_controls: false,
+                restore_sign_in: false,
+                tray: false,
+                autostart: false,
+            },
+        );
+        app.attach(&ctx);
+        populate(&mut app);
+        app.reveal_theme_changes = false;
+        let insets = egui::epaint::MarginF32 {
+            left: 0.0,
+            right: 0.0,
+            top: 59.0,
+            bottom: 34.0,
+        };
+        let draw = |app: &mut App, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(390.0, 844.0),
+                )),
+                safe_area_insets: Some(egui::SafeAreaInsets(insets)),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| app.frame_ui(ui));
+            output.textures_delta.clear();
+        };
+        app.open(Page::Home);
+        draw(&mut app, vec![]);
+        app.show_queue_panel = true;
+        crate::ui::set_library_open(&ctx, true);
+        crate::ui::set_now_playing_open(&ctx, true);
+        draw(&mut app, vec![]);
+        // A page reached without a tap on any of them.
+        app.open(Page::Settings);
+        draw(&mut app, vec![]);
+        draw(&mut app, vec![]);
+        assert!(!app.show_queue_panel, "the queue stays over the new page");
+        assert!(!crate::ui::library_open(&ctx), "the library stays");
+        assert!(!crate::ui::now_playing_open(&ctx), "the playing song stays");
+
+        app.show_lyrics_panel = true;
+        draw(&mut app, vec![]);
+        draw(&mut app, vec![]);
+        // The middle of the player bar, above the home indicator.
+        let bar = egui::pos2(150.0, 778.0);
+        let button = |pressed| egui::Event::PointerButton {
+            pos: bar,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        draw(&mut app, vec![egui::Event::PointerMoved(bar), button(true)]);
+        draw(&mut app, vec![button(false)]);
+        draw(&mut app, vec![]);
+        assert!(!app.show_lyrics_panel, "the lyrics stay over the playing song");
+        assert!(crate::ui::now_playing_open(&ctx));
         app.backend.shutdown();
         let _ = std::fs::remove_dir_all(root);
     }

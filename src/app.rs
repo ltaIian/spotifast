@@ -11520,8 +11520,12 @@ impl App {
                 }
             }
             Action::OpenUrl(url) => {
+                // iOS hands links to UIKit, on this thread, through egui.
+                #[cfg(target_os = "ios")]
+                ctx.open_url(egui::OpenUrl::new_tab(url));
                 // Open links off the UI thread with the platform-specific
                 // launcher used elsewhere in the app.
+                #[cfg(not(target_os = "ios"))]
                 std::thread::spawn(move || {
                     if let Err(error) = crate::opener::open(&url) {
                         log::warn!("unable to open {url}: {error}");

@@ -3,15 +3,27 @@
 //! Other platforms use the `open` crate. Windows uses `ShellExecuteW` because
 //! the crate's PowerShell launcher can be unavailable (#107), while
 //! `cmd /c start` expands percent-encoded URL segments as environment
-//! variables.
+//! variables. iOS opens nothing here: links go to UIKit on the UI thread
+//! (`Action::OpenUrl`), and sign-in pages to a sheet over the app
+//! (`src/ios/auth_sheet.rs`).
 
 use std::ffi::OsStr;
 use std::io;
 
 /// Opens a URL or a path in whatever the desktop uses for it.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "ios")))]
 pub fn open(target: impl AsRef<OsStr>) -> io::Result<()> {
     open::that(target.as_ref())
+}
+
+/// An iOS app can neither start a launcher (the `open` crate's `uiopen`,
+/// which the sandbox forbids) nor show a folder, so nothing is opened.
+#[cfg(target_os = "ios")]
+pub fn open(target: impl AsRef<OsStr>) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!("iOS cannot open {}", target.as_ref().to_string_lossy()),
+    ))
 }
 
 /// Opens a URL or a path in whatever the desktop uses for it.

@@ -39,7 +39,12 @@ for tool in xcodebuild xcrun cargo rustup python3 ditto zip; do
         esac
     fi
 done
-xcode=$(xcodebuild -version 2> /dev/null | awk '/^Xcode / { print $2 }')
+# xcodebuild fails, rather than print a version, when only the command line
+# tools are selected or when Xcode's licence has not been accepted yet.
+if ! xcode_version=$(xcodebuild -version 2>&1); then
+    die "xcodebuild cannot run: $xcode_version (install Xcode, select it with sudo xcode-select -s /Applications/Xcode.app, and accept its licence with sudo xcodebuild -license accept)"
+fi
+xcode=$(awk '/^Xcode / { print $2 }' <<< "$xcode_version")
 [ -n "$xcode" ] || die "xcodebuild needs Xcode itself, not only the command line tools: install Xcode and select it with sudo xcode-select -s /Applications/Xcode.app"
 [ "${xcode%%.*}" -ge 15 ] || die "Xcode $xcode is too old: the project needs Xcode 15 or newer"
 xcrun --sdk iphoneos --show-sdk-path > /dev/null 2>&1 || die "Xcode $xcode has no iOS SDK: add the iOS platform in Xcode's settings, under Components"

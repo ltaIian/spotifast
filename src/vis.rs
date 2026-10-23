@@ -709,11 +709,12 @@ mod tests {
         for equalizer_on in [false, true] {
             let control = crate::sink::AudioControl::new(crate::sink::DEFAULT_BUFFER_MS);
             let eq = crate::eq::shared();
-            {
-                let mut settings = eq.lock().unwrap();
-                settings.on = equalizer_on;
-                settings.bands_db[0] = 12.0;
-            }
+            let mut settings = crate::eq::EqSettings {
+                on: equalizer_on,
+                ..crate::eq::EqSettings::default()
+            };
+            settings.bands_db[0] = 12.0;
+            eq.set(settings);
             let (mut tapped, recorded) = recorded_tap(Arc::clone(&control), eq);
             write_level(&mut tapped, 0.25);
             control.interrupt();

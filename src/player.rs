@@ -846,7 +846,7 @@ fn sink_builder(
     let device = config.audio_device.clone();
     let buffer_ms = config.buffer_ms;
     let tap = Arc::clone(&config.tap);
-    let eq = Arc::clone(&config.eq);
+    let eq = config.eq.clone();
     let notify_device = Arc::clone(&notify);
     let report: ErrorHook = Arc::new(move |message: String| {
         let snapshot = {

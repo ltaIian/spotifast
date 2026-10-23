@@ -111,6 +111,8 @@ plugins:
   - jekyll-vitepress-theme
 
 exclude:
+  # Planning notes for the iOS port, not site pages.
+  - ios-port
   - _site
   - .jekyll-cache
   - .sass-cache

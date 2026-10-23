@@ -3681,8 +3681,7 @@ impl App {
         let main_window = !self.window_hidden && !self.settings.winamp_window;
         // Each new main window takes the saved zoom; Ctrl+plus/minus is
         // remembered for the next start.
-        if main_window
-            && let Some(zoom) = crate::shell::window::keep_zoom(ctx, self.settings.zoom)
+        if main_window && let Some(zoom) = crate::shell::window::keep_zoom(ctx, self.settings.zoom)
         {
             self.settings.zoom = zoom;
             self.settings_dirty = true;

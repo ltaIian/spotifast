@@ -1196,6 +1196,25 @@ mod tests {
         }
     }
 
+    /// With the switch off nothing the sliders hold is heard, the bass
+    /// boost included: the samples pass bit for bit.
+    #[test]
+    fn the_switch_off_silences_the_bass_boost() {
+        let shared = shared();
+        shared.set(EqSettings {
+            on: false,
+            bass_boost_db: BASS_BOOST_MAX_DB,
+            preamp_db: 6.0,
+            bands_db: [12.0; 10],
+            ..EqSettings::default()
+        });
+        let mut processor = Processor::new(shared);
+        let original = tone(40.0, 8192);
+        let mut samples = original.clone();
+        processor.process(&mut samples);
+        assert_eq!(samples, original);
+    }
+
     /// The bands of the preset called `name`.
     fn preset(name: &str) -> [f32; 10] {
         PRESETS

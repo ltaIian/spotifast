@@ -1639,6 +1639,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
             // The iPhone build's interface on the desktop: what iOS does
             // not have is hidden, and a phone's safe area is kept clear.
             "ios" => crate::theme::preview_ios(true),
+            // Settings scrolled to its equalizer.
+            "settings-equalizer" => crate::ui::settings::demo_scroll_to_equalizer(),
             _ => {}
         }
     }
@@ -7658,6 +7660,190 @@ mod tests {
         assert!(!app.palette.dark);
         app.lyrics_fullscreen = Some(false);
         frame(&ctx, &mut app);
+        app.backend.shutdown();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// One frame of a phone's screen, `size` points, with the system's bars
+    /// over `insets` of it.
+    fn frame_sized(
+        ctx: &egui::Context,
+        app: &mut App,
+        size: egui::Vec2,
+        insets: egui::epaint::MarginF32,
+    ) -> egui::FullOutput {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+            safe_area_insets: Some(egui::SafeAreaInsets(insets)),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| app.frame_ui(ui));
+        output.textures_delta.clear();
+        output
+    }
+
+    /// The shapes a frame draws, `Shape::Vec`s opened up, each with the
+    /// rect it is clipped to.
+    fn painted_shapes(output: &egui::FullOutput) -> Vec<(egui::Shape, egui::Rect)> {
+        fn open(
+            shape: &egui::Shape,
+            clip: egui::Rect,
+            out: &mut Vec<(egui::Shape, egui::Rect)>,
+        ) {
+            match shape {
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        open(shape, clip, out);
+                    }
+                }
+                shape => out.push((shape.clone(), clip)),
+            }
+        }
+        let mut out = Vec::new();
+        for clipped in &output.shapes {
+            open(&clipped.shape, clipped.clip_rect, &mut out);
+        }
+        out
+    }
+
+    /// What a frame draws outside `content`, other than plain rectangles:
+    /// the fills behind a phone's status bar and home indicator, and the
+    /// shadows and backdrops that may reach under them.
+    fn painted_outside(output: &egui::FullOutput, content: egui::Rect) -> Vec<String> {
+        painted_shapes(output)
+            .into_iter()
+            .filter(|(shape, _)| !matches!(shape, egui::Shape::Rect(_)))
+            .filter_map(|(shape, clip)| {
+                let painted = shape.visual_bounding_rect().intersect(clip);
+                (painted.is_positive() && !content.expand(0.5).contains_rect(painted))
+                    .then(|| format!("{painted:?}: {shape:?}"))
+            })
+            .collect()
+    }
+
+    /// On a phone, with the status bar around a Dynamic Island above and
+    /// the home indicator below, every page, screen and dialog lays out
+    /// inside the safe area. Only plain fills reach under the bars.
+    #[test]
+    fn every_surface_renders_on_a_phone() {
+        // Drawn as the iPhone build, until the test ends however it ends.
+        struct Preview;
+        impl Drop for Preview {
+            fn drop(&mut self) {
+                crate::theme::preview_ios(false);
+            }
+        }
+        crate::theme::preview_ios(true);
+        let _preview = Preview;
+        let root =
+            std::env::temp_dir().join(format!("spotifast-phone-render-{}", std::process::id()));
+        let dirs = AppDirs {
+            config: root.join("config"),
+            state: root.join("state"),
+            cache: root.join("cache"),
+        };
+        let ctx = egui::Context::default();
+        let waker = crate::backend::Waker::default();
+        waker.attach(&ctx);
+        let mut app = App::new(
+            &waker,
+            dirs,
+            Settings::default(),
+            AppOptions {
+                media_controls: false,
+                restore_sign_in: false,
+                tray: false,
+                autostart: false,
+            },
+        );
+        app.attach(&ctx);
+        populate(&mut app);
+        // These frames never advance the clock or take pictures.
+        app.reveal_theme_changes = false;
+
+        let size = egui::vec2(390.0, 844.0);
+        let insets = egui::epaint::MarginF32 {
+            left: 0.0,
+            right: 0.0,
+            top: 59.0,
+            bottom: 34.0,
+        };
+        let content = egui::Rect::from_min_max(egui::pos2(0.0, 59.0), egui::pos2(390.0, 810.0));
+        let check = |app: &mut App, what: &str| {
+            frame_sized(&ctx, app, size, insets);
+            frame_sized(&ctx, app, size, insets);
+            let output = frame_sized(&ctx, app, size, insets);
+            assert_eq!(ctx.content_rect(), content, "{what}");
+            let outside = painted_outside(&output, content);
+            assert!(
+                outside.is_empty(),
+                "{what} draws outside the safe area: {outside:#?}"
+            );
+        };
+
+        let pages = [
+            Page::Home,
+            Page::TopSongs,
+            Page::Search,
+            Page::LikedSongs,
+            Page::Albums,
+            Page::Artists,
+            Page::Podcasts,
+            Page::Episodes,
+            Page::Playlist("pl1".into()),
+            Page::Album("alb0".into()),
+            Page::Artist("art0".into()),
+            Page::Show("sh0".into()),
+            Page::Queue,
+            Page::Settings,
+            Page::Equalizer,
+        ];
+        for page in pages {
+            app.open(page.clone());
+            check(&mut app, &format!("{page:?}"));
+            assert_eq!(app.page(), &page);
+        }
+        app.open(Page::Home);
+        crate::ui::set_library_open(&ctx, true);
+        check(&mut app, "the library");
+        crate::ui::set_library_open(&ctx, false);
+        crate::ui::set_now_playing_open(&ctx, true);
+        check(&mut app, "the playing song's view");
+        crate::ui::set_now_playing_open(&ctx, false);
+        app.show_queue_panel = true;
+        check(&mut app, "the queue");
+        app.show_queue_panel = false;
+        app.lyrics_uri = app.now_playing().map(|now| now.uri);
+        app.lyrics = Loadable::Loaded(Some(sample_lyrics()));
+        app.show_lyrics_panel = true;
+        check(&mut app, "the lyrics");
+        app.show_lyrics_panel = false;
+        app.friends = Loadable::Loaded(Vec::new());
+        app.show_friends_panel = true;
+        check(&mut app, "the listening activity");
+        app.show_friends_panel = false;
+        app.show_devices = true;
+        check(&mut app, "the devices");
+        app.show_devices = false;
+        for dialog in [
+            Dialog::CreatePlaylist {
+                name: "Autumn drives".into(),
+                public: false,
+                add_uris: vec![],
+            },
+            Dialog::ConfirmDeletePlaylist {
+                id: "pl1".into(),
+                name: "Long Way Home".into(),
+                owned: true,
+            },
+        ] {
+            app.dialog = Some(dialog);
+            check(&mut app, "a dialog");
+        }
+        app.dialog = None;
+        app.auth = AuthStatus::SignedOut;
+        app.user = None;
+        check(&mut app, "the sign-in card");
         app.backend.shutdown();
         let _ = std::fs::remove_dir_all(root);
     }

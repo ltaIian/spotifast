@@ -61,6 +61,19 @@ impl<'a> RowText<'a> {
 
 /// The guide to writing a palette file for the themes folder.
 const THEMES_GUIDE_URL: &str = "https://spotifast.rocks/settings-and-files/#custom-themes";
+
+#[cfg(feature = "demo")]
+thread_local! {
+    /// `--demo-show settings-equalizer`: Settings stays scrolled to its
+    /// equalizer, for screenshots of it.
+    static DEMO_EQUALIZER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Keeps Settings scrolled to its equalizer on this thread's windows.
+#[cfg(feature = "demo")]
+pub(crate) fn demo_scroll_to_equalizer() {
+    DEMO_EQUALIZER.with(|scroll| scroll.set(true));
+}
 /// The equalizer's presets as chips, the built-in ones and then the ones
 /// saved here (#702), with the controls that save and delete those. A saved
 /// preset carries its preamp too, and is the current one when both it and a
@@ -2112,6 +2125,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     ];
     if section_matches(&needle, &equalizer, &equalizer_rows) {
         any_visible = true;
+        #[cfg(feature = "demo")]
+        if DEMO_EQUALIZER.with(std::cell::Cell::get) {
+            ui.scroll_to_cursor(Some(Align::Min));
+        }
         section(ui, &palette, &equalizer, |ui| {
             filtered_row(
                 ui,

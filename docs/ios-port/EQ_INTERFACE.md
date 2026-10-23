@@ -1,5 +1,7 @@
 # Equaliser and bass boost: the shared interface
 
+> Status: the declarations below (constants, `EqSettings::bass_boost_db`, `Settings::eq_bass_boost_db`, `app::eq_settings`, `Action::SetEqBassBoost` and its handler) are committed on `ios-port` by the orchestrator. They compile and change nothing audible yet. audio-dsp implements the processing, mobile-ui the interface. Where this file says an agent "adds" one of those declarations, it already exists: use it, do not add it again.
+
 This is the contract between the `audio-dsp` agent (filters, processing, persistence) and the `mobile-ui` agent (sliders, presets, the equaliser screen). Both implement exactly what is written here. If either needs a change, it stops and asks the orchestrator; neither edits this file on its own.
 
 Spotifast already has a ten-band equaliser (`src/eq.rs`), a preamp, balance and mono, Winamp's presets plus the app's own, user-saved presets, a Settings page section (`src/ui/settings.rs`, "Equalizer") and the Winamp skin's EQ window (`src/ui/winamp/equalizer.rs`). The task keeps all of that and adds one thing to the engine: **Bass boost**, a low-shelf filter independent of the 60 Hz band that stacks with whatever preset is active.

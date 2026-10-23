@@ -736,7 +736,11 @@ fn table_contents(app: &mut App, ui: &mut egui::Ui, table: Table<'_>) {
         .pagination
         .filter(|page| page.total > 0 && sort.is_none() && needle.is_empty());
     let rows = finite.map_or(entry.visible.len(), |page| page.total as usize);
+    // A phone's rows keep only the cover and the title, which need no
+    // headings over them.
+    let headings = !widgets::phone_columns(ui.ctx(), ui.available_width());
     if rows > 0
+        && headings
         && let Some(column) = widgets::table_header(
             ui,
             &palette,

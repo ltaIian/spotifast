@@ -382,11 +382,16 @@ pub fn popup(app: &mut App, ctx: &egui::Context) {
     let button = ctx
         .data(|data| data.get_temp::<Rect>(egui::Id::new(BUTTON_RECT_ID)))
         .unwrap_or_else(|| Rect::from_min_size(pos2(400.0, 400.0), vec2(0.0, 0.0)));
-    let width = 320.0;
-    let position = pos2(
-        (button.right() - width).max(8.0),
-        (button.top() - 12.0).max(8.0),
-    );
+    // No wider than the screen, less a margin on each side, its frame
+    // included.
+    let content = crate::theme::content_rect(ctx);
+    let width = 320.0_f32.min(content.width() - 30.0);
+    let mut left = (button.right() - width).max(8.0);
+    if crate::theme::compact(ctx) {
+        let right = content.right() - width - 22.0;
+        left = left.min(right).max(content.left() + 8.0);
+    }
+    let position = pos2(left, (button.top() - 12.0).max(content.top() + 8.0));
     let area = egui::Area::new(egui::Id::new("devices-popup"))
         .order(egui::Order::Foreground)
         .fixed_pos(position)
@@ -486,7 +491,7 @@ pub fn popup(app: &mut App, ctx: &egui::Context) {
                     active_id.as_deref(),
                 );
 
-                let max_height = (position.y - ctx.content_rect().top() - 62.0).clamp(52.0, 416.0);
+                let max_height = (position.y - content.top() - 62.0).clamp(52.0, 416.0);
                 crate::autoscroll::show(
                     ui,
                     egui::ScrollArea::vertical()

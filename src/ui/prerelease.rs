@@ -30,7 +30,8 @@ pub(super) fn show(app: &mut App, ui: &mut egui::Ui, data: &Prerelease) {
     let wide = ui.available_width() > 700.0;
     let cover_size = if wide { 232.0 } else { 160.0 };
     if let Some([red, green, blue]) = data.color {
-        let bounds = ui.max_rect().expand2(vec2(widgets::PAGE_PADDING, 4.0));
+        let padding = widgets::page_padding(ui.ctx());
+        let bounds = ui.max_rect().expand2(vec2(padding, 4.0));
         let top = Color32::from_rgb(red, green, blue);
         let dark = Color32::from_rgb(
             (red as f32 * 0.40) as u8,

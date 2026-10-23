@@ -21,15 +21,21 @@ const CLOSE_GLYPH_INSET: i8 = 6;
 pub fn side_panel(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let locale = app.locale;
-    let fit = super::yielding_panel(
-        ui.ctx(),
-        "friends-panel",
-        theme::SIDE_PANEL_MIN_WIDTH..=560.0,
-        app.settings.queue_width,
-        ui.available_width() - super::topbar::least_width(ui.ctx()),
-    );
+    // On a phone the panel takes the whole screen, over the page.
+    let compact = theme::compact(ui.ctx());
+    let fit = if compact {
+        super::full_width(ui)
+    } else {
+        super::yielding_panel(
+            ui.ctx(),
+            "friends-panel",
+            theme::SIDE_PANEL_MIN_WIDTH..=560.0,
+            app.settings.queue_width,
+            ui.available_width() - super::topbar::least_width(ui.ctx()),
+        )
+    };
     let panel = egui::Panel::right("friends-panel")
-        .resizable(true)
+        .resizable(!compact)
         .default_size(app.settings.queue_width)
         .size_range(fit.range.clone())
         .show_separator_line(false)
@@ -43,6 +49,9 @@ pub fn side_panel(app: &mut App, ui: &mut egui::Ui) {
         let window_controls =
             super::window_controls_reservation(ui.ctx(), true, false, ui.available_width());
         ui.add_space(window_controls.queue_top);
+        if compact {
+            ui.add_space(theme::titlebar_inset(ui.ctx()));
+        }
         let mut close = false;
         egui::Sides::new().shrink_left().show(
             ui,

@@ -1636,6 +1636,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
                 app.settings.web_client_id = Some(id.clone());
                 app.web_app = Some(id);
             }
+            // The iPhone build's interface on the desktop: what iOS does
+            // not have is hidden, and a phone's safe area is kept clear.
+            "ios" => crate::theme::preview_ios(true),
             _ => {}
         }
     }

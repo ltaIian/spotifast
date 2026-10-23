@@ -37,6 +37,9 @@ use crate::theme::{self, Icon};
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let ctx = &ctx;
+    theme::settle_layout(ctx);
+    let mut safe = safe_area(ui, &app.palette);
+    let ui = &mut safe;
     keys::handle(app, ctx);
     for path in winamp::dropped_skins(ctx) {
         app.actions.push(Action::InstallSkin(path));
@@ -46,6 +49,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         || (app.is_connected() && app.user.is_none());
     if !signed_in {
         player_bar::end_tint_session(ctx);
+        set_library_open(ctx, false);
+        set_now_playing_open(ctx, false);
         login::show(app, ui, connecting);
         update::show(app, ctx);
         toasts(app, ctx, 20.0);
@@ -53,44 +58,199 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         fastframe_titlebar::resize(ui);
         return;
     }
-    if titlebar_spans_window(cfg!(target_os = "macos"), fastframe_titlebar::enabled()) {
-        fastframe_titlebar::drag(
-            ui,
-            Rect::from_min_size(
-                ui.max_rect().min,
-                vec2(
-                    ui.max_rect().width(),
-                    theme::top_bar_height() + theme::titlebar_inset(ui.ctx()),
-                ),
-            ),
-        );
-    }
-    player_bar::show(app, ui);
-    if app.lyrics_fullscreen.is_some() {
-        lyrics::fullscreen(app, ui);
+    let compact = theme::compact(ctx);
+    if compact {
+        compact_layout(app, ui);
     } else {
-        if app.settings.sidebar_visible {
-            sidebar::show(app, ui);
+        if titlebar_spans_window(cfg!(target_os = "macos"), fastframe_titlebar::enabled()) {
+            fastframe_titlebar::drag(
+                ui,
+                Rect::from_min_size(
+                    ui.max_rect().min,
+                    vec2(
+                        ui.max_rect().width(),
+                        theme::top_bar_height() + theme::titlebar_inset(ui.ctx()),
+                    ),
+                ),
+            );
         }
-        if app.show_queue_panel {
-            queue::side_panel(app, ui);
+        player_bar::show(app, ui);
+        if app.lyrics_fullscreen.is_some() {
+            lyrics::fullscreen(app, ui);
+        } else {
+            if app.settings.sidebar_visible {
+                sidebar::show(app, ui);
+            }
+            if app.show_queue_panel {
+                queue::side_panel(app, ui);
+            }
+            if app.show_lyrics_panel {
+                lyrics::side_panel(app, ui);
+            }
+            if app.show_friends_panel {
+                friends::side_panel(app, ui);
+            }
+            central(app, ui);
+            keep_room_for_panels(app, ctx);
         }
-        if app.show_lyrics_panel {
-            lyrics::side_panel(app, ui);
-        }
-        if app.show_friends_panel {
-            friends::side_panel(app, ui);
-        }
-        central(app, ui);
-        keep_room_for_panels(app, ctx);
     }
     devices::popup(app, ctx);
     dialogs::show(app, ctx);
     update::show(app, ctx);
     widgets::drag_ghost(ctx, &app.palette, app.locale);
-    toasts(app, ctx, theme::PLAYER_BAR_HEIGHT + 16.0);
+    let bar = if compact {
+        theme::MINI_BAR_HEIGHT
+    } else {
+        theme::PLAYER_BAR_HEIGHT
+    };
+    toasts(app, ctx, bar + 16.0);
     caption_buttons(ui, &app.palette, app.locale);
     fastframe_titlebar::resize(ui);
+}
+
+/// The safe area. On a phone the status bar and the home indicator cover
+/// the screen's edges: the panel colour fills behind them, and everything
+/// else lays out in the child returned here, where nothing is covered.
+/// Toasts, popups, menus and modals keep to the same area on their own. On
+/// a desktop the two rects are the same and nothing changes.
+fn safe_area(ui: &mut egui::Ui, palette: &theme::Palette) -> egui::Ui {
+    let ctx = ui.ctx().clone();
+    let content = theme::content_rect(&ctx);
+    let viewport = ctx.viewport_rect();
+    if content != viewport {
+        ui.painter().rect_filled(viewport, 0.0, palette.panel);
+    }
+    ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("safe-area")
+            .max_rect(content)
+            .style(ctx.global_style()),
+    )
+}
+
+/// The band above the safe area that a phone's status bar covers, if any.
+/// Whatever is at the top of the screen fills it in its own colour.
+pub(crate) fn status_bar_band(ctx: &Context) -> Option<Rect> {
+    let content = theme::content_rect(ctx);
+    let viewport = ctx.viewport_rect();
+    (content.top() > viewport.top()).then(|| {
+        Rect::from_min_max(viewport.min, egui::pos2(viewport.right(), content.top()))
+    })
+}
+
+/// The band below the safe area that a phone's home indicator covers, if
+/// any. The player bar fills it in its own colour.
+pub(crate) fn home_indicator_band(ctx: &Context) -> Option<Rect> {
+    let content = theme::content_rect(ctx);
+    let viewport = ctx.viewport_rect();
+    (content.bottom() < viewport.bottom()).then(|| {
+        Rect::from_min_max(egui::pos2(viewport.left(), content.bottom()), viewport.max)
+    })
+}
+
+/// What fills the screen above the player bar in the compact layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Surface {
+    Page,
+    Library,
+    NowPlaying,
+    Queue,
+    Lyrics,
+    Friends,
+    LyricsFullscreen,
+}
+
+const LIBRARY_OPEN_ID: &str = "compact-library-open";
+const NOW_PLAYING_OPEN_ID: &str = "compact-now-playing-open";
+
+/// Whether the compact layout shows the library over the page: the
+/// sidebar, which has no room beside the page on a phone.
+pub(crate) fn library_open(ctx: &Context) -> bool {
+    ctx.data(|data| data.get_temp::<bool>(Id::new(LIBRARY_OPEN_ID)))
+        .unwrap_or(false)
+}
+
+pub(crate) fn set_library_open(ctx: &Context, open: bool) {
+    ctx.data_mut(|data| data.insert_temp(Id::new(LIBRARY_OPEN_ID), open));
+}
+
+/// Whether the compact layout shows the playing song's own view, which the
+/// player bar opens.
+pub(crate) fn now_playing_open(ctx: &Context) -> bool {
+    ctx.data(|data| data.get_temp::<bool>(Id::new(NOW_PLAYING_OPEN_ID)))
+        .unwrap_or(false)
+}
+
+pub(crate) fn set_now_playing_open(ctx: &Context, open: bool) {
+    ctx.data_mut(|data| data.insert_temp(Id::new(NOW_PLAYING_OPEN_ID), open));
+}
+
+/// The topmost surface: a right-hand panel over the playing song's view,
+/// that over the library, and the library over the page.
+fn compact_surface(app: &App, ctx: &Context) -> Surface {
+    if app.lyrics_fullscreen.is_some() {
+        Surface::LyricsFullscreen
+    } else if app.show_queue_panel {
+        Surface::Queue
+    } else if app.show_lyrics_panel {
+        Surface::Lyrics
+    } else if app.show_friends_panel {
+        Surface::Friends
+    } else if now_playing_open(ctx) {
+        Surface::NowPlaying
+    } else if library_open(ctx) {
+        Surface::Library
+    } else {
+        Surface::Page
+    }
+}
+
+/// The compact layout, a phone's: one column. The library, the right-hand
+/// panels and the playing song's view each take the whole screen over the
+/// page, and the player bar shrinks to one row that opens that view.
+fn compact_layout(app: &mut App, ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone();
+    let surface = compact_surface(app, &ctx);
+    if surface != Surface::NowPlaying {
+        player_bar::show(app, ui);
+    }
+    let before = app.actions.len();
+    match surface {
+        Surface::LyricsFullscreen => lyrics::fullscreen(app, ui),
+        Surface::Queue => queue::side_panel(app, ui),
+        Surface::Lyrics => lyrics::side_panel(app, ui),
+        Surface::Friends => friends::side_panel(app, ui),
+        Surface::NowPlaying => player_bar::now_playing(app, ui),
+        Surface::Library => sidebar::show(app, ui),
+        Surface::Page => central(app, ui),
+    }
+    // Opening a page from a screen laid over the page shows the page.
+    if app.actions[before..].iter().any(navigates) {
+        close_surface(app, &ctx, surface);
+    }
+}
+
+/// Whether an action goes to a page.
+fn navigates(action: &Action) -> bool {
+    matches!(action, Action::Open(_) | Action::FocusSearch)
+}
+
+/// Takes a surface laid over the page away, the way its own close button
+/// does.
+fn close_surface(app: &mut App, ctx: &Context, surface: Surface) {
+    let toggle = match surface {
+        Surface::Queue => Action::ToggleQueuePanel,
+        Surface::Lyrics => Action::ToggleLyricsPanel,
+        Surface::Friends => Action::ToggleFriendsPanel,
+        Surface::NowPlaying => return set_now_playing_open(ctx, false),
+        Surface::Library => return set_library_open(ctx, false),
+        Surface::Page | Surface::LyricsFullscreen => return,
+    };
+    // Its own close button may have asked already this frame.
+    let same = |action: &Action| std::mem::discriminant(action) == std::mem::discriminant(&toggle);
+    if !app.actions.iter().any(same) {
+        app.actions.push(toggle);
+    }
 }
 
 /// The main window's narrowest width with these panels open: their least
@@ -175,6 +335,18 @@ pub(crate) fn yielding_panel(
     PanelFit {
         range: min..=max,
         yielding: max < chosen - 0.5,
+    }
+}
+
+/// The library or a right-hand panel in the compact layout: the whole
+/// width, over the page. It is not resizable there, and the width it is
+/// drawn at is never one the person chose, so it never replaces the width
+/// kept for the desktop.
+pub(crate) fn full_width(ui: &egui::Ui) -> PanelFit {
+    let width = ui.available_width();
+    PanelFit {
+        range: width..=width,
+        yielding: true,
     }
 }
 
@@ -289,8 +461,19 @@ fn central(app: &mut App, ui: &mut egui::Ui) {
                 .ctx()
                 .data(|data| data.get_temp::<f32>(scrolled_id))
                 .unwrap_or(0.0);
-            if let Some((top, bottom)) = header_wash(&palette, overview, tint) {
+            let wash = header_wash(&palette, overview, tint);
+            if let Some((top, bottom)) = wash {
                 widgets::paint_vertical_gradient(ui, header_rect(rect, scrolled), top, bottom);
+            }
+            // On a phone the status bar sits over the band above the page,
+            // which takes the colour of the page's top edge.
+            if let Some(band) = status_bar_band(ui.ctx()) {
+                let painter = ui.painter().with_clip_rect(band);
+                painter.rect_filled(band, 0.0, palette.window);
+                if let Some((top, bottom)) = wash {
+                    let shown = (scrolled / HEADER_WASH_HEIGHT).clamp(0.0, 1.0);
+                    painter.rect_filled(band, 0.0, top.lerp_to_gamma(bottom, shown));
+                }
             }
             ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
             // egui fades a scrolled page's edge into the panel's plain
@@ -305,10 +488,11 @@ fn central(app: &mut App, ui: &mut egui::Ui) {
                     .auto_shrink([false, false]),
                 egui::Vec2b::new(false, true),
                 |ui| {
+                    let padding = widgets::page_padding(ui.ctx()) as i8;
                     Frame::new()
                         .inner_margin(Margin {
-                            left: widgets::PAGE_PADDING as i8,
-                            right: widgets::PAGE_PADDING as i8,
+                            left: padding,
+                            right: padding,
                             top: 4,
                             bottom: 48,
                         })
@@ -356,12 +540,15 @@ fn header_wash(
     (palette.tint.a() > 0).then_some((palette.tint, Color32::TRANSPARENT))
 }
 
+/// How far down the page the header's wash fades out.
+const HEADER_WASH_HEIGHT: f32 = 340.0;
+
 /// Where the header's wash is painted: the top of the panel, moved up by
 /// how far the page has scrolled, so it leaves with the hero.
 fn header_rect(panel: Rect, scrolled: f32) -> Rect {
     Rect::from_min_size(
         panel.min - vec2(0.0, scrolled.max(0.0)),
-        vec2(panel.width(), 340.0),
+        vec2(panel.width(), HEADER_WASH_HEIGHT),
     )
 }
 

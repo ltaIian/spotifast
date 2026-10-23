@@ -17,6 +17,27 @@ pub const CARD_WIDTH: f32 = 172.0;
 pub const CARD_ART: f32 = CARD_WIDTH - 24.0;
 pub const CARD_GAP: f32 = 14.0;
 pub const PAGE_PADDING: f32 = 24.0;
+/// The page's side margins in the compact layout, where every point of a
+/// phone's width counts.
+pub const COMPACT_PAGE_PADDING: f32 = 16.0;
+
+/// The page's side margins: [`PAGE_PADDING`], narrower on a phone.
+pub fn page_padding(ctx: &egui::Context) -> f32 {
+    if theme::compact(ctx) {
+        COMPACT_PAGE_PADDING
+    } else {
+        PAGE_PADDING
+    }
+}
+
+/// How tall a menu's row is: a finger needs more than a pointer.
+fn menu_row_height(ctx: &egui::Context) -> f32 {
+    if theme::touch(ctx) {
+        theme::TOUCH_TARGET
+    } else {
+        28.0
+    }
+}
 
 /// Draws an image (or a placeholder) in a square.
 pub fn cover(
@@ -447,7 +468,7 @@ fn menu_item_response(
 ) -> (egui::Response, bool) {
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
-        vec2(width, 28.0),
+        vec2(width, menu_row_height(ui.ctx())),
         if enabled {
             Sense::click()
         } else {
@@ -552,7 +573,8 @@ fn submenu<R>(
     add_contents: impl FnOnce(&mut Ui) -> R,
 ) -> Option<egui::InnerResponse<R>> {
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
+    let height = menu_row_height(ui.ctx());
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
     let is_in_menu = egui::menu::is_in_menu(ui);
     let submenu_id = egui::menu::SubMenu::id_from_widget_id(response.id);
     let is_open = if is_in_menu {
@@ -1401,12 +1423,20 @@ fn plays_fit(width: f32) -> bool {
     width > 560.0
 }
 
-fn columns(width: f32, row: &TrackRow<'_>) -> Columns {
+/// Whether a song list `width` wide takes a phone's columns: on a touch
+/// screen with no room for the album, the cover carries the play control,
+/// the heart and the length make way for the title, and the table's
+/// headings with them.
+pub fn phone_columns(ctx: &egui::Context, width: f32) -> bool {
+    theme::touch(ctx) && width <= 560.0
+}
+
+fn columns(width: f32, row: &TrackRow<'_>, touch: bool, phone: bool) -> Columns {
     let extra_wide = width > 920.0;
     let wide = width > 760.0;
     let medium = width > 560.0;
     Columns {
-        number: if row.compact { 0.0 } else { 44.0 },
+        number: if row.compact || phone { 0.0 } else { 44.0 },
         cover: if row.show_cover {
             if row.compact { 44.0 } else { 52.0 }
         } else {
@@ -1432,9 +1462,22 @@ fn columns(width: f32, row: &TrackRow<'_>) -> Columns {
         } else {
             0.0
         },
-        heart: if row.compact { 0.0 } else { 36.0 },
-        duration: if row.compact { 44.0 } else { 56.0 },
-        more: if row.compact { 0.0 } else { 36.0 },
+        heart: if row.compact || phone { 0.0 } else { 36.0 },
+        duration: if row.compact {
+            44.0
+        } else if phone {
+            0.0
+        } else {
+            56.0
+        },
+        // Without a pointer's right click, the menu needs its button.
+        more: if touch {
+            theme::TOUCH_TARGET
+        } else if row.compact {
+            0.0
+        } else {
+            36.0
+        },
     }
 }
 
@@ -1486,7 +1529,15 @@ fn track_row_contents(
         theme::ROW_HEIGHT
     };
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(vec2(width, row_height), Sense::click_and_drag());
+    // A finger's swipe over a list scrolls it rather than picking up a
+    // row, so on a touch screen a row only takes taps.
+    let touch = theme::touch(ui.ctx());
+    let sense = if touch {
+        Sense::click()
+    } else {
+        Sense::click_and_drag()
+    };
+    let (rect, response) = ui.allocate_exact_size(vec2(width, row_height), sense);
     let rect = rect.translate(vec2(0.0, row.shift));
     let unavailable = !app.row_playable(row.item);
     response.widget_info(|| {
@@ -1510,7 +1561,8 @@ fn track_row_contents(
         return (response, None);
     }
     // Start a sidebar drag only after egui's drag threshold.
-    if ui.is_enabled()
+    if !touch
+        && ui.is_enabled()
         && row.item.is_track()
         && response.drag_started_by(egui::PointerButton::Primary)
     {
@@ -1585,7 +1637,7 @@ fn track_row_contents(
     }
     // The row highlight also shows keyboard focus. Do not add an outline
     // when a mouse click gives the row focus for arrow-key navigation.
-    let cols = columns(width, &row);
+    let cols = columns(width, &row, touch, phone_columns(ui.ctx(), width));
     let painter = ui.painter().clone();
     let mut x = rect.left() + 8.0;
 
@@ -1973,6 +2025,7 @@ fn track_row_contents(
                     .layout(Layout::centered_and_justified(egui::Direction::LeftToRight)),
             );
             if !hovered
+                && !touch
                 && saved != Some(true)
                 && !child.memory(|memory| memory.has_focus(child.next_auto_id()))
             {
@@ -2021,6 +2074,7 @@ fn track_row_contents(
                 .layout(Layout::centered_and_justified(egui::Direction::LeftToRight)),
         );
         if !hovered
+            && !touch
             && !egui::Popup::is_id_open(ui.ctx(), menu_id)
             && !child.memory(|memory| memory.has_focus(child.next_auto_id()))
         {
@@ -2052,7 +2106,22 @@ fn track_row_contents(
     // Row interactions.
     let mut pick = None;
     let accessible_click = response.clicked() && response.interact_pointer_pos().is_none();
-    if ui.is_enabled() && (response.double_clicked() || accessible_click) && !unavailable {
+    if touch {
+        // A finger has no hover and no second button: a tap plays the
+        // song, as a double click does with a pointer, and the playing one
+        // goes on playing. Picking several songs is a pointer's.
+        if ui.is_enabled() && response.clicked() && !response.double_clicked() && !unavailable {
+            if !is_current {
+                app.actions.push(Action::PlayFromRow {
+                    context: row.context.clone(),
+                    uri: row.item.uri().to_string(),
+                    index: row.index as u32,
+                });
+            } else if !playing {
+                app.actions.push(Action::TogglePlay);
+            }
+        }
+    } else if ui.is_enabled() && (response.double_clicked() || accessible_click) && !unavailable {
         app.actions.push(Action::PlayFromRow {
             context: row.context.clone(),
             uri: row.item.uri().to_string(),
@@ -2701,7 +2770,8 @@ pub fn card(
         ui.painter()
             .galley(subtitle_pos, subtitle_galley, palette.secondary);
 
-        if playable && hovered {
+        // A finger cannot hover, so on a touch screen the disc stays.
+        if playable && (hovered || theme::touch(ui.ctx())) {
             let button_rect = Rect::from_center_size(
                 pos2(image_rect.right() - 26.0, image_rect.bottom() - 26.0),
                 Vec2::splat(44.0),
@@ -2989,7 +3059,10 @@ pub fn thin_slider(
     width: f32,
     wheel_step: Option<f32>,
 ) -> SliderEvent {
-    let (_, rect) = ui.allocate_space(vec2(width, 16.0));
+    // A finger gets a 44-point strip; the bar drawn in it stays 4 points.
+    let touch = theme::touch(ui.ctx());
+    let height = if touch { theme::TOUCH_TARGET } else { 16.0 };
+    let (_, rect) = ui.allocate_space(vec2(width, height));
     let response = ui.interact(rect, id, Sense::click_and_drag());
     let dragging_value = ui.data(|data| data.get_temp::<f32>(id));
     let pointer_value = response
@@ -3077,7 +3150,9 @@ pub fn thin_slider(
         }
     });
     if ui.is_rect_visible(rect) {
-        let active = response.hovered()
+        // Without hover the handle is always shown.
+        let active = touch
+            || response.hovered()
             || response.has_focus()
             || response.dragged()
             || dragging_value.is_some();
@@ -3204,7 +3279,7 @@ pub fn search_field(
     hint: &str,
     width: f32,
 ) -> egui::Response {
-    let height = 34.0;
+    let height = if theme::touch(ui.ctx()) { 40.0 } else { 34.0 };
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let has_focus = ui.memory(|memory| memory.has_focus(id));
     let fill = if has_focus {
@@ -3295,9 +3370,15 @@ pub fn search_field(
     response
 }
 
-/// A toggle drawn as a switch.
+/// A toggle drawn as a switch: iOS's own size on a touch screen.
 pub fn switch(ui: &mut Ui, palette: &Palette, label: &str, on: &mut bool) -> egui::Response {
-    let size = vec2(40.0, 22.0);
+    let touch = theme::touch(ui.ctx());
+    let size = if touch {
+        vec2(51.0, 31.0)
+    } else {
+        vec2(40.0, 22.0)
+    };
+    let knob = if touch { 13.5 } else { 8.0 };
     let (rect, mut response) = ui.allocate_exact_size(size, Sense::click());
     if response.clicked() {
         *on = !*on;
@@ -3311,9 +3392,10 @@ pub fn switch(ui: &mut Ui, palette: &Palette, label: &str, on: &mut bool) -> egu
         );
         ui.painter()
             .rect_filled(rect, rect.height() / 2.0, Color32::from(fill));
-        let knob_x = egui::lerp(rect.left() + 11.0..=rect.right() - 11.0, t);
+        let end = rect.height() / 2.0;
+        let knob_x = egui::lerp(rect.left() + end..=rect.right() - end, t);
         ui.painter()
-            .circle_filled(pos2(knob_x, rect.center().y), 8.0, Color32::WHITE);
+            .circle_filled(pos2(knob_x, rect.center().y), knob, Color32::WHITE);
     }
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *on, label)
@@ -4349,6 +4431,94 @@ mod tests {
                 );
                 assert_eq!(rect.height(), theme::ROW_HEIGHT);
                 assert!(app.actions.is_empty());
+            }
+        }
+    }
+
+    /// On a phone a tap on a song plays it, as a double click does with a
+    /// pointer, and a swipe over it picks nothing up; with a pointer the
+    /// same click only picks the row out.
+    #[test]
+    fn a_tap_on_a_phone_plays_the_song_and_a_swipe_drags_nothing() {
+        for (width, phone) in [(390.0, true), (1280.0, false)] {
+            let mut app = test_app();
+            app.backend.shutdown();
+            let ctx = egui::Context::default();
+            theme::install(&ctx);
+            let item = song("spotify:track:tapped");
+            let context = RowContext::Queue;
+            let draw = |app: &mut App, events: Vec<egui::Event>| {
+                let mut rect = Rect::NOTHING;
+                let mut picked = None;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(width, 600.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        theme::settle_layout(ui.ctx());
+                        let (response, pick) = track_row_response(
+                            ui,
+                            app,
+                            TrackRow {
+                                index: 0,
+                                number: Some(1),
+                                item: &item,
+                                context: &context,
+                                show_cover: true,
+                                show_album: false,
+                                added_at: None,
+                                added_by: None,
+                                show_added_by: false,
+                                show_plays: false,
+                                compact: false,
+                                thin: false,
+                                shift: 0.0,
+                                picked: false,
+                                picked_songs: &[],
+                                picked_positions: &[],
+                                position: None,
+                            },
+                        );
+                        rect = response.rect;
+                        picked = pick;
+                    },
+                );
+                output.textures_delta.clear();
+                (rect, picked)
+            };
+            let (rect, _) = draw(&mut app, vec![]);
+            let at = pos2(rect.left() + 200.0, rect.center().y);
+            let button = |pos, pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            draw(
+                &mut app,
+                vec![egui::Event::PointerMoved(at), button(at, true)],
+            );
+            let (_, picked) = draw(&mut app, vec![button(at, false)]);
+            let plays = |action: &Action| matches!(action, Action::PlayFromRow { .. });
+            let played = app.actions.iter().any(plays);
+            assert_eq!(played, phone, "a click {width} points wide");
+            assert_eq!(picked.is_some(), !phone, "a click {width} points wide");
+            if phone {
+                app.actions.clear();
+                let below = at + vec2(0.0, 80.0);
+                draw(
+                    &mut app,
+                    vec![egui::Event::PointerMoved(at), button(at, true)],
+                );
+                draw(&mut app, vec![egui::Event::PointerMoved(below)]);
+                draw(&mut app, vec![button(below, false)]);
+                assert!(app.actions.is_empty(), "{:?}", app.actions);
+                assert!(!egui::DragAndDrop::has_any_payload(&ctx));
             }
         }
     }

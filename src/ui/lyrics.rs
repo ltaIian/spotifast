@@ -35,15 +35,21 @@ fn blend(from: egui::Color32, to: egui::Color32, t: f32) -> egui::Color32 {
 
 pub fn side_panel(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    let fit = super::yielding_panel(
-        ui.ctx(),
-        "lyrics-panel",
-        theme::SIDE_PANEL_MIN_WIDTH..=640.0,
-        app.settings.lyrics_width,
-        ui.available_width() - super::topbar::least_width(ui.ctx()),
-    );
+    // On a phone the lyrics take the whole screen, over the page.
+    let compact = theme::compact(ui.ctx());
+    let fit = if compact {
+        super::full_width(ui)
+    } else {
+        super::yielding_panel(
+            ui.ctx(),
+            "lyrics-panel",
+            theme::SIDE_PANEL_MIN_WIDTH..=640.0,
+            app.settings.lyrics_width,
+            ui.available_width() - super::topbar::least_width(ui.ctx()),
+        )
+    };
     let panel = egui::Panel::right("lyrics-panel")
-        .resizable(true)
+        .resizable(!compact)
         .default_size(app.settings.lyrics_width)
         .size_range(fit.range.clone())
         .show_separator_line(false)
@@ -60,6 +66,9 @@ pub fn side_panel(app: &mut App, ui: &mut egui::Ui) {
             ui.available_width(),
         );
         ui.add_space(window_controls.lyrics_top);
+        if compact {
+            ui.add_space(theme::titlebar_inset(ui.ctx()));
+        }
         ui.horizontal(|ui| {
             ui.add_space(4.0);
             theme::text(
@@ -81,15 +90,17 @@ pub fn side_panel(app: &mut App, ui: &mut egui::Ui) {
                 {
                     app.actions.push(Action::ToggleLyricsPanel);
                 }
-                if theme::icon_button(
-                    ui,
-                    Icon::Expand,
-                    18.0,
-                    palette.secondary,
-                    palette.text,
-                    &gettext(app.locale, "Full screen lyrics"),
-                )
-                .clicked()
+                // On a phone the panel already fills the screen.
+                if !compact
+                    && theme::icon_button(
+                        ui,
+                        Icon::Expand,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        &gettext(app.locale, "Full screen lyrics"),
+                    )
+                    .clicked()
                 {
                     app.actions.push(Action::SetLyricsFullscreen(true));
                 }
@@ -302,9 +313,14 @@ fn contents(app: &mut App, ui: &mut egui::Ui) {
     );
     crate::autoscroll::lyrics(ui, scroll.id);
     // Scrolling by hand means the reader wants to look elsewhere; the
-    // Follow button in the header picks the song back up.
+    // Follow button in the header picks the song back up. A finger scrolls
+    // by dragging, which the wheel's delta does not show.
+    let touch = theme::touch(ui.ctx());
     if ui.rect_contains_pointer(scroll.inner_rect)
-        && ui.input(|input| input.smooth_scroll_delta.y != 0.0)
+        && ui.input(|input| {
+            input.smooth_scroll_delta.y != 0.0
+                || (touch && input.pointer.primary_down() && input.pointer.delta().y != 0.0)
+        })
     {
         app.lyrics_following = false;
     }

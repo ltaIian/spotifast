@@ -236,6 +236,13 @@ jobs:
           xcrun simctl install "$device" "$app"
           SIMCTL_CHILD_SPOTIFAST_SELFTEST=1 SIMCTL_CHILD_RUST_BACKTRACE=1 \
             xcrun simctl launch --console-pty --terminate-running-process "$device" "$bundle" > out/sim-console.log 2>&1 &
+          # A cold launch of the debug app on a busy runner has taken up to
+          # minutes; count from the moment the process exists.
+          for i in $(seq 1 120); do
+            xcrun simctl spawn "$device" launchctl list | grep -q "$bundle" && break
+            sleep 2
+          done
+          echo "process up after about $((i * 2)) s" | tee out/sim-launch-wait.txt
           sleep 12
           xcrun simctl io "$device" screenshot out/sim-12s.png || true
           sleep 28
@@ -274,6 +281,10 @@ jobs:
           for flow in signin-web signin-playback; do
             SIMCTL_CHILD_SPOTIFAST_SELFTEST=$flow SIMCTL_CHILD_RUST_BACKTRACE=1 \
               xcrun simctl launch --console-pty --terminate-running-process "$device" "$bundle" > "out/sim-$flow-console.log" 2>&1 &
+            for i in $(seq 1 120); do
+              xcrun simctl spawn "$device" launchctl list | grep -q "$bundle" && break
+              sleep 2
+            done
             sleep 20
             xcrun simctl io "$device" screenshot "out/sim-$flow-20s.png" || true
             sleep 25
@@ -287,6 +298,41 @@ jobs:
             find "$data" -maxdepth 5 -name '*.log' -size -2M -exec cp {} out/sim-container-signin/ \;
           fi
           xcrun simctl spawn "$device" log show --last 3m --style compact --predicate 'process == "Spotifast"' > out/sim-signin-oslog.txt 2>&1 || true
+
+      # Once the iOS entry point understands SPOTIFAST_SELFTEST=background, it
+      # plays silence, shows a test track in Now Playing and logs a beat every
+      # 2 s. Settings is opened over it for 45 s, so the beats show whether
+      # the app's logic keeps running while it is in the background.
+      - name: Simulator background pass
+        id: background
+        if: steps.smoke.outcome == 'success'
+        continue-on-error: true
+        run: |
+          if ! grep -rqs '"background"' src/ios; then
+            echo "the iOS entry point has no background self-test yet" | tee out/sim-background.txt
+            exit 0
+          fi
+          device=$(cat out/sim-udid.txt)
+          bundle=$(cat out/sim-bundle.txt)
+          SIMCTL_CHILD_SPOTIFAST_SELFTEST=background SIMCTL_CHILD_RUST_BACKTRACE=1 \
+            xcrun simctl launch --console-pty --terminate-running-process "$device" "$bundle" > out/sim-background-console.log 2>&1 &
+          for i in $(seq 1 120); do
+            xcrun simctl spawn "$device" launchctl list | grep -q "$bundle" && break
+            sleep 2
+          done
+          sleep 20
+          xcrun simctl launch "$device" com.apple.Preferences > /dev/null
+          sleep 45
+          xcrun simctl launch "$device" "$bundle" > /dev/null
+          sleep 10
+          xcrun simctl io "$device" screenshot out/sim-background-75s.png || true
+          xcrun simctl terminate "$device" "$bundle" || true
+          data=$(xcrun simctl get_app_container "$device" "$bundle" data 2>/dev/null || true)
+          if [ -n "$data" ]; then
+            mkdir -p out/sim-container-background
+            find "$data" -maxdepth 5 -name '*.log' -size -2M -exec cp {} out/sim-container-background/ \;
+          fi
+          xcrun simctl spawn "$device" log show --last 4m --style compact --predicate 'process == "Spotifast"' > out/sim-background-oslog.txt 2>&1 || true
 
       - name: build-ipa.sh (device, release)
         id: ipa

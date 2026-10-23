@@ -276,6 +276,8 @@ impl NativeStore {
             let store = zbus_secret_service_keyring_store::Store::new();
             #[cfg(target_os = "macos")]
             let store = apple_native_keyring_store::keychain::Store::new();
+            #[cfg(target_os = "ios")]
+            let store = apple_native_keyring_store::protected::Store::new();
             #[cfg(windows)]
             let store = windows_native_keyring_store::Store::new();
             self.store = Some(store.map_err(|error| native_error("open", error))?);

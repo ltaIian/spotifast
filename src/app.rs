@@ -10395,6 +10395,10 @@ impl App {
     /// Apply one queued UI action after drawing, updating optimistic local state
     /// and scheduling any backend work or preference persistence it requires.
     pub(crate) fn apply(&mut self, action: Action, ctx: &egui::Context) {
+        #[cfg(target_os = "ios")]
+        if crate::ios::inert(&action) {
+            return;
+        }
         if matches!(
             &action,
             Action::Open(_)
@@ -11893,6 +11897,11 @@ impl App {
     }
 
     fn check_for_updates(&mut self, manual: bool) {
+        // A sideloaded iOS app cannot replace itself: its sideloading tool
+        // brings new versions.
+        if cfg!(target_os = "ios") {
+            return;
+        }
         if self.update_checking
             || (self.offline && self.update_source.is_github())
             || !matches!(

@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use crate::app::{App, AppOptions};
 use crate::backend::Waker;
+use crate::model::Action;
 use crate::paths::AppDirs;
 use crate::settings::Settings;
 
@@ -137,6 +138,35 @@ fn with_app(when: &str, act: impl FnOnce(&mut App)) {
             Err(_) => log::warn!("{when}: the window is busy, nothing saved"),
         }
     });
+}
+
+/// Whether `action` belongs to the desktop alone, and does nothing on iOS.
+/// An iOS app keeps one window, which the person leaves rather than closes:
+/// quitting or closing it would end the app, and the Winamp mini player and
+/// MilkDrop are windows of their own. There is no title bar, no login item
+/// and no folder to show, and a sideloaded app cannot update itself.
+pub fn inert(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::Quit
+            | Action::CloseWindow
+            | Action::HideWindow
+            | Action::ToggleWinampWindow
+            | Action::ToggleWinampOnTop
+            | Action::SetWinampTaskbar(_)
+            | Action::SetCustomTitlebar(_)
+            | Action::ToggleWinampMilkdrop
+            | Action::DownloadMilkdropPack(_)
+            | Action::SetStartWithComputer(_)
+            | Action::CheckForUpdates
+            | Action::ShowUpdate
+            | Action::DownloadUpdate
+            | Action::InstallUpdate
+            | Action::OpenThemesFolder
+            | Action::OpenSkinsFolder
+            | Action::OpenLocalFilesFolder
+            | Action::OpenMilkdropFolder
+    )
 }
 
 /// The settings that describe the desktop's other windows and its updates,

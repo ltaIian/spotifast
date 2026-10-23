@@ -1643,6 +1643,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
             "settings-equalizer" => crate::ui::settings::demo_scroll_to_equalizer(),
             // The equalizer page scrolled to its bands.
             "equalizer-end" => crate::ui::equalizer::demo_scroll_to_end(),
+            // Search before anything is searched: the recent searches.
+            "search-history" => {
+                app.search.query.clear();
+                app.search.committed.clear();
+            }
             _ => {}
         }
     }

@@ -22,6 +22,14 @@ devices|--demo-size 390x844 --demo-page home --demo-show ios,devices
 dialog|--demo-size 390x844 --demo-page home --demo-show ios,create
 home-dark|--demo-size 390x844 --demo-page home --demo-show ios,dark
 now-playing-dark|--demo-size 390x844 --demo-page home --demo-show ios,dark --demo-click 150,778
+search-history|--demo-size 390x844 --demo-page search --demo-show ios,search-history
+lyrics|--demo-size 390x844 --demo-page home --demo-show ios,lyrics-follow
+friends|--demo-size 390x844 --demo-page home --demo-show ios,friends
+edit-dialog|--demo-size 390x844 --demo-page playlist:pl1 --demo-show ios,edit
+equalizer-dark|--demo-size 390x844 --demo-page equalizer --demo-show ios,eq-user-presets,dark
+settings-equalizer-dark|--demo-size 390x844 --demo-page settings --demo-show ios,eq-user-presets,settings-equalizer,dark
+# An iPhone SE's 375 by 667 points, with the same previewed safe area.
+equalizer-small|--demo-size 375x667 --demo-page equalizer --demo-show ios,eq-user-presets
 # The compact layout on a desktop window that narrow (no iOS preview).
 compact-playlist|--demo-size 390x844 --demo-page playlist:pl1
 # Desktop size: the desktop look must not change, apart from the new Bass

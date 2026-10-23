@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		5F1A00000000000000000020 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F1A00000000000000000010 /* main.swift */; };
+		5F1A0000000000000000AC20 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5F1A0000000000000000AC10 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -16,6 +17,7 @@
 		5F1A00000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		5F1A00000000000000000013 /* Spotifast.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Spotifast.entitlements; sourceTree = "<group>"; };
 		5F1A00000000000000000014 /* Spotifast.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Spotifast.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5F1A0000000000000000AC10 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -33,6 +35,7 @@
 			isa = PBXGroup;
 			children = (
 				5F1A00000000000000000003 /* Sources */,
+				5F1A0000000000000000AC10 /* Assets.xcassets */,
 				5F1A00000000000000000012 /* Info.plist */,
 				5F1A00000000000000000013 /* Spotifast.entitlements */,
 				5F1A00000000000000000004 /* Products */,
@@ -114,6 +117,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5F1A0000000000000000AC20 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -178,6 +182,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Spotifast.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -232,6 +237,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Spotifast.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;

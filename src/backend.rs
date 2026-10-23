@@ -3899,7 +3899,15 @@ impl Worker {
 
     /// Browses for receivers Spotify's device list does not know about. The
     /// browse blocks, so it runs off the runtime's worker threads.
+    ///
+    /// Not on iOS: an app's own multicast needs an entitlement a free Apple
+    /// ID cannot sign, so there are no LAN receivers, Cast or Sonos there.
+    /// Spotify Connect still reaches other devices through Spotify itself.
     fn discover_receivers(&mut self) {
+        if cfg!(target_os = "ios") {
+            log::debug!("no receiver discovery on iOS");
+            return;
+        }
         if self
             .receiver_discovery
             .as_ref()
